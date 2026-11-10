@@ -1,4 +1,4 @@
-// Remembers scan results, hidden items and settings in this browser only.
+// Remembers hidden items and settings in this browser only.
 const PREFIX = 'snaprecap.';
 
 export function load(key, fallback) {

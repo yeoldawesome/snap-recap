@@ -1,13 +1,21 @@
 import { useRef, useState } from 'react';
+import { canPickWithHandles, fromDrop, fromInput, pickZips } from '../lib/persist.js';
 
-export default function Welcome({ importing, importInfo, error, onFiles }) {
+export default function Welcome({ importing, importInfo, error, onFiles, saved = [], onRestore, onForget }) {
   const input = useRef(null);
   const [over, setOver] = useState(false);
 
   const drop = (e) => {
     e.preventDefault();
     setOver(false);
-    if (!importing) onFiles(e.dataTransfer.files);
+    if (!importing) fromDrop(e).then(onFiles);
+  };
+
+  const choose = async () => {
+    if (importing) return;
+    if (!canPickWithHandles) return input.current.click();
+    const items = await pickZips();
+    if (items) onFiles(items);
   };
 
   return (
@@ -24,18 +32,28 @@ export default function Welcome({ importing, importInfo, error, onFiles }) {
       </h1>
       <p className="lead">
         Drop in your Memories export and watch it as a slideshow or one long video recap, with the date under every
-        moment. Shirtless shots are filtered out automatically.
+        moment.
       </p>
+
+      {saved.length > 0 && !importing && (
+        <div className="restore">
+          <span>
+            You have <b>{saved.length} zip{saved.length > 1 ? 's' : ''}</b> from last time.
+          </span>
+          <button className="btn primary" onClick={onRestore}>Reopen my memories</button>
+          <button className="btn ghost small" onClick={onForget}>Forget them</button>
+        </div>
+      )}
 
       <div
         className={`drop ${over ? 'over' : ''} ${importing ? 'busy' : ''}`}
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
         onDrop={drop}
-        onClick={() => !importing && input.current.click()}
+        onClick={choose}
         role="button"
         tabIndex={0}
-        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && !importing && input.current.click()}
+        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && choose()}
       >
         <input
           ref={input}
@@ -43,7 +61,7 @@ export default function Welcome({ importing, importInfo, error, onFiles }) {
           accept=".zip,application/zip"
           multiple
           hidden
-          onChange={(e) => { onFiles(e.target.files); e.target.value = ''; }}
+          onChange={(e) => { onFiles(fromInput(e.target.files)); e.target.value = ''; }}
         />
         {importing ? (
           <>
@@ -72,7 +90,7 @@ export default function Welcome({ importing, importInfo, error, onFiles }) {
         </div>
         <div className="step">
           <b>3</b>
-          <p>Drop them above. Big exports take a few minutes to check the first time.</p>
+          <p>Drop them above. They'll still be here next time you open Snap Recap.</p>
         </div>
       </section>
 

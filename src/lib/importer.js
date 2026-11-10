@@ -51,7 +51,7 @@ async function addEntries(entries, map, hint) {
       m.main = e;
       m.kind = VIDEO.has(x) ? 'video' : 'photo';
       m.date = entryDate(name, e.lastModDate, hint);
-      m.id = `${key}:${e.uncompressedSize}`; // stable id for remembering scan results
+      m.id = `${key}:${e.uncompressedSize}`; // stable id for remembering hidden items
     }
   }
 }

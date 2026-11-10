@@ -1,27 +1,44 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { urlFor } from '../lib/importer.js';
 import { fmtDate, fmtWeekday } from '../lib/storage.js';
+import { clipCapFor, slideSecFor } from '../lib/settings.js';
+import PlayerSettings from './PlayerSettings.jsx';
 
-export default function Player({ mode, items, slideSec = 3, clipCap = Infinity, onHide, onClose }) {
+const isTyping = (t) => t?.closest?.('.settings') || ['INPUT', 'SELECT', 'TEXTAREA'].includes(t?.tagName);
+
+export default function Player({ mode, items, settings: s, update, onHide, onClose }) {
   const [list, setList] = useState(items);
   const [i, setI] = useState(0);
   const [paused, setPaused] = useState(false);
   const [ended, setEnded] = useState(false);
   const [media, setMedia] = useState({ id: null, main: null, overlay: null });
+  const [layers, setLayers] = useState([]); // on-screen frames; the last one is current, earlier ones are fading out
   const [vProg, setVProg] = useState(0);
   const [idle, setIdle] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const rootRef = useRef(null);
   const videoRef = useRef(null);
+  const dirRef = useRef(1);
 
+  const isPhoto = mode === 'photo';
+  const slideSec = slideSecFor(s, list.length);
+  const clipCap = clipCapFor(s, list.length);
   const cur = list[i];
   const ready = media.id === cur?.id;
 
   const next = useCallback(() => {
     setVProg(0);
+    dirRef.current = 1;
     if (i + 1 < list.length) setI(i + 1);
+    else if (s.loop) setI(0);
     else setEnded(true);
-  }, [i, list.length]);
-  const prev = useCallback(() => { setVProg(0); setEnded(false); setI((n) => Math.max(0, n - 1)); }, []);
+  }, [i, list.length, s.loop]);
+  const prev = useCallback(() => {
+    setVProg(0);
+    dirRef.current = -1;
+    setEnded(false);
+    setI((n) => Math.max(0, n - 1));
+  }, []);
 
   // Load the current item; preload the next one.
   useEffect(() => {
@@ -35,20 +52,46 @@ export default function Player({ mode, items, slideSec = 3, clipCap = Infinity, 
     return () => { alive = false; };
   }, [cur, i, list]);
 
+  // When the new item is ready, put it on top and let the old one fade out underneath.
+  useEffect(() => {
+    if (!ready) return;
+    setLayers((ls) => {
+      const top = ls[ls.length - 1];
+      if (top && top.id === media.id && !top.leaving) return ls;
+      const leaving = s.transition === 'none'
+        ? []
+        : ls.filter((l) => l.id !== media.id).slice(-1).map((l) => ({ ...l, leaving: true }));
+      return [...leaving, { id: media.id, media, dir: dirRef.current }];
+    });
+  }, [ready, media, s.transition]);
+
+  useEffect(() => {
+    if (!layers.some((l) => l.leaving)) return;
+    const t = setTimeout(() => setLayers((ls) => ls.filter((l) => !l.leaving)), s.fadeSec * 1000 + 80);
+    return () => clearTimeout(t);
+  }, [layers, s.fadeSec]);
+
   // Photo timer.
   useEffect(() => {
-    if (mode !== 'photo' || !ready || paused || ended) return;
+    if (!isPhoto || !ready || paused || ended) return;
     const t = setTimeout(next, slideSec * 1000);
     return () => clearTimeout(t);
-  }, [mode, ready, paused, ended, next, slideSec, i]);
+  }, [isPhoto, ready, paused, ended, next, slideSec, i]);
 
-  // Pause/resume video.
+  // Pause/resume and sound/speed for the current video.
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
     if (paused || ended) v.pause();
     else v.play().catch(() => {});
-  }, [paused, ended, media]);
+  }, [paused, ended, layers]);
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.muted = s.muted;
+    v.volume = s.volume;
+    v.playbackRate = s.speed;
+  }, [s.muted, s.volume, s.speed, layers]);
 
   const hide = useCallback(() => {
     if (!cur) return;
@@ -66,25 +109,32 @@ export default function Player({ mode, items, slideSec = 3, clipCap = Infinity, 
 
   useEffect(() => {
     const onKey = (e) => {
+      if (e.key === 'Escape') {
+        if (showSettings) return setShowSettings(false);
+        if (!document.fullscreenElement) onClose();
+        return;
+      }
+      if (isTyping(e.target)) return;
       if (e.key === ' ') { e.preventDefault(); setPaused((p) => !p); }
       else if (e.key === 'ArrowRight') next();
       else if (e.key === 'ArrowLeft') prev();
       else if (e.key.toLowerCase() === 'h') hide();
       else if (e.key.toLowerCase() === 'f') fullscreen();
-      else if (e.key === 'Escape' && !document.fullscreenElement) onClose();
+      else if (e.key.toLowerCase() === 's') setShowSettings((v) => !v);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [next, prev, hide, onClose]);
+  }, [next, prev, hide, onClose, showSettings]);
 
-  // Hide controls and cursor when the mouse is still.
+  // Hide controls and cursor when the mouse is still (not while settings are open).
   useEffect(() => {
+    if (showSettings) { setIdle(false); return; }
     let t;
     const wake = () => { setIdle(false); clearTimeout(t); t = setTimeout(() => setIdle(true), 2500); };
     wake();
     window.addEventListener('mousemove', wake);
     return () => { clearTimeout(t); window.removeEventListener('mousemove', wake); };
-  }, []);
+  }, [showSettings]);
 
   const onTime = (e) => {
     const v = e.currentTarget;
@@ -96,56 +146,80 @@ export default function Player({ mode, items, slideSec = 3, clipCap = Infinity, 
     }
   };
 
+  const settingsPanel = showSettings && (
+    <PlayerSettings mode={mode} s={s} update={update} slideSec={slideSec} clipCap={clipCap}
+      onClose={() => setShowSettings(false)} />
+  );
+  const gear = (
+    <button className={`gear ${showSettings ? 'on' : ''}`} onClick={() => setShowSettings((v) => !v)}
+      title="Settings (S)" aria-label="Settings">⚙</button>
+  );
+
   if (ended) {
     return (
       <div className="player" ref={rootRef}>
         <div className="the-end">
           <h2>That’s a wrap ✨</h2>
-          <p className="muted">{list.length} {mode === 'photo' ? 'photos' : 'videos'} from {fmtDate(list[0].date)} to {fmtDate(list[list.length - 1].date)}</p>
+          <p className="muted">{list.length} {isPhoto ? 'photos' : 'videos'} from {fmtDate(list[0].date)} to {fmtDate(list[list.length - 1].date)}</p>
           <div className="row center">
             <button className="btn primary" onClick={() => { setEnded(false); setI(0); }}>↺ Watch again</button>
             <button className="btn ghost" onClick={onClose}>Back</button>
           </div>
         </div>
+        {gear}
+        {settingsPanel}
       </div>
     );
   }
 
+  const showCaption = s.showDate || s.showWeekday;
+
   return (
     <div className={`player ${idle ? 'idle' : ''}`} ref={rootRef}>
       <div className="stage">
-        {ready && (
-          <div className="frame fade-in" key={cur.id}>
-            {mode === 'photo' ? (
-              <div className="kb" style={{ animationDuration: `${slideSec + 1}s`, animationPlayState: paused ? 'paused' : 'running' }}>
-                <img src={media.main} alt="" />
-                {media.overlay && <img src={media.overlay} alt="" />}
-              </div>
-            ) : (
-              <div className="kb still">
-                <video
-                  ref={videoRef}
-                  src={media.main}
-                  autoPlay
-                  playsInline
-                  onTimeUpdate={onTime}
-                  onEnded={next}
-                  onError={next}
-                />
-                {media.overlay && <img src={media.overlay} alt="" />}
-              </div>
-            )}
-          </div>
-        )}
+        {layers.map((l) => {
+          const top = !l.leaving;
+          return (
+            <div
+              key={l.id}
+              className={`frame t-${s.transition} ${top ? 'enter' : 'leave'} ${l.dir < 0 ? 'back' : ''}`}
+              style={{ '--d': `${s.fadeSec}s` }}
+            >
+              {isPhoto && s.blurBg && <img className="bg-blur" src={l.media.main} alt="" />}
+              {isPhoto ? (
+                <div className={`kb ${s.kenBurns ? '' : 'still'}`}
+                  style={{ animationDuration: `${slideSec + 1}s`, animationPlayState: paused ? 'paused' : 'running' }}>
+                  <img src={l.media.main} alt="" />
+                  {s.showOverlays && l.media.overlay && <img src={l.media.overlay} alt="" />}
+                </div>
+              ) : (
+                <div className="kb still">
+                  <video
+                    ref={top ? videoRef : (el) => { if (el) el.muted = true; }}
+                    src={l.media.main}
+                    autoPlay
+                    playsInline
+                    onTimeUpdate={top ? onTime : undefined}
+                    onEnded={top ? next : undefined}
+                    onError={top ? next : undefined}
+                  />
+                  {s.showOverlays && l.media.overlay && <img src={l.media.overlay} alt="" />}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
-      <div className="caption">
-        <span className="weekday">{fmtWeekday(cur.date)}</span>
-        <span className="date">{fmtDate(cur.date)}</span>
-      </div>
+      {showCaption && (
+        <div className="caption">
+          {s.showWeekday && <span className="weekday">{fmtWeekday(cur.date)}</span>}
+          {s.showDate && <span className="date">{fmtDate(cur.date)}</span>}
+        </div>
+      )}
 
-      <div className="progress">
-        {mode === 'photo' ? (
+      <div className="progress" style={{ visibility: s.showProgress ? 'visible' : 'hidden' }}>
+        {isPhoto ? (
           <i key={`${cur.id}-${paused}`} className={ready && !paused ? 'run' : ''}
             style={{ animationDuration: `${slideSec}s` }} />
         ) : (
@@ -162,7 +236,9 @@ export default function Player({ mode, items, slideSec = 3, clipCap = Infinity, 
         <button onClick={fullscreen} title="Fullscreen (F)">⛶</button>
       </div>
 
+      {gear}
       <button className="close" onClick={onClose} title="Close (Esc)">✕</button>
+      {settingsPanel}
     </div>
   );
 }
