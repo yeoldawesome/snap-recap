@@ -273,3 +273,26 @@ input[type='range'] { flex: 1; accent-color: var(--accent-2); height: 24px; }
 .face-tile:hover { border-color: var(--accent-1); }
 .face-tile.on { border: 3px solid var(--accent-2); }
 .face-tile.on::after { content: '★'; position: absolute; right: 4px; top: 2px; color: var(--accent-2); text-shadow: 0 1px 2px #000; }
+/* save-as-video dialog */
+.export-dialog { width: min(980px, 100%); text-align: left; }
+.export-body { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 18px; margin-top: 10px; min-height: 0; }
+.export-preview { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
+.export-preview canvas, .export-preview video, .export-preview img { display: block; max-width: 100%; max-height: 60vh; width: auto; height: auto; background: #000; border-radius: 12px; }
+.export-preview canvas { width: 100%; object-fit: contain; }
+.export-options { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.export-options .row { flex-wrap: wrap; }
+.export-options .seg { flex-wrap: wrap; }
+.export-options .note { margin: -4px 0 0; }
+.name-field { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.name-input { display: inline-flex; align-items: center; gap: 4px; flex: 1; min-width: 160px; }
+.name-input input { flex: 1; min-width: 0; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; }
+.export-summary { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px 12px; margin: 4px 0 0; padding: 10px 12px; background: var(--panel-2); border-radius: 12px; }
+.export-summary div { min-width: 0; }
+.export-summary dt { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.export-summary dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+.warn { margin: 0; padding: 8px 10px; border-radius: 10px; background: #ffb02e22; border: 1px solid #ffb02e66; }
+.export-actions { justify-content: flex-end; gap: 10px; margin-top: auto; }
+@media (max-width: 720px) {
+  .export-body { grid-template-columns: 1fr; }
+  .export-preview canvas, .export-preview video, .export-preview img { max-height: 40vh; }
+}

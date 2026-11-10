@@ -1,10 +1,12 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { readBlob } from '../lib/importer.js';
 import {
-  ASPECTS, analyzeAll, describeAll, distanceTo, drawAligned, faceFor, facesOf, followingPerson, frameNow, isAnalyzed, isRef,
+  ASPECTS, analyzeAll, describeAll, distanceTo, faceFor, facesOf, followingPerson, frameNow, isAnalyzed, isRef,
   manualFace, personOf, personStatus, pickOf, frameIfReady, previewNow, warmFrames, setPerson, setPick, thumbOf, toggleRef,
 } from '../lib/faces.js';
 import { fmtDate, fmtDuration, load, save } from '../lib/storage.js';
+import { paint } from '../lib/export.js';
+import ExportDialog from './ExportDialog.jsx';
 
 const DEFAULTS = {
   aspect: '9:16',
@@ -27,7 +29,6 @@ const inRange = (m, from, to) => {
   const k = dayKey(m.date);
   return (!from || k >= from) && (!to || k <= to);
 };
-const PREFETCH = 8; // full frames ready before a recording starts
 const LOOKAHEAD_MS = 3000; // during playback, keep this much upcoming time decoded
 const MAX_LOOKAHEAD = 30;
 const GRACE_MS = 150; // if a photo is still loading this long after its turn, show the quick preview instead
@@ -85,11 +86,6 @@ function Toggle({ label, checked, onChange }) {
       <i />
     </label>
   );
-}
-
-function pickVideoType() {
-  const types = ['video/mp4;codecs=avc1', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
-  return types.find((t) => window.MediaRecorder?.isTypeSupported?.(t)) || '';
 }
 
 /** Lets the user choose which face to line up, mark the eyes by hand, or skip the photo. */
@@ -304,8 +300,7 @@ export default function FaceAlign({ photos, onClose }) {
   const [rev, setRev] = useState(0); // bumps when faces or picks change
   const [idx, setIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [recording, setRecording] = useState(null); // null | { done, total }
-  const [download, setDownload] = useState(null);
+  const [exporting, setExporting] = useState(false); // the save dialog is open
   const [picking, setPicking] = useState(null);
   const [person, setPersonState] = useState(personOf);
   const [choosingPerson, setChoosingPerson] = useState(false);
@@ -362,7 +357,7 @@ export default function FaceAlign({ photos, onClose }) {
   const noFace = analyzed.length - list.length;
 
   // Playback state lives in a ref so the draw loop doesn't restart on every change.
-  const st = useRef({ i: 0, prev: null, t0: 0, dirty: true, playing: false, recorder: null });
+  const st = useRef({ i: 0, prev: null, t0: 0, dirty: true, playing: false, rendering: false });
   const live = useRef({ list, opts });
   live.current = { list, opts };
   useEffect(() => { st.current.dirty = true; }, [opts, list]);
@@ -383,13 +378,8 @@ export default function FaceAlign({ photos, onClose }) {
     setIdx(s.i);
   }, []);
 
-  const finishRecording = useCallback(() => {
-    const s = st.current;
-    s.recorder?.stop();
-    s.recorder = null;
-    s.playing = false;
-    setPlaying(false);
-  }, []);
+  // While a video is being saved, the on-screen player stands still so it doesn't compete for photos.
+  const setRendering = useCallback((on) => { st.current.rendering = on; st.current.dirty = true; }, []);
 
   // Draw loop.
   useEffect(() => {
@@ -399,6 +389,7 @@ export default function FaceAlign({ photos, onClose }) {
     const tick = (now) => {
       raf = requestAnimationFrame(tick);
       const s = st.current;
+      if (s.rendering) return;
       const { list: fl, opts: o } = live.current;
       const [W, H] = ASPECTS[o.aspect] || ASPECTS['9:16'];
       if (c.width !== W || c.height !== H) { c.width = W; c.height = H; s.dirty = true; }
@@ -424,7 +415,7 @@ export default function FaceAlign({ photos, onClose }) {
       }
       const fadeMs = o.fadeMs;
       const dur = Math.max(1, o.holdMs + o.fadeMs); // ms per photo
-      const fastPlay = s.playing && !s.recorder && dur < FAST_PLAY_MS;
+      const fastPlay = s.playing && dur < FAST_PLAY_MS;
       const dir = s.scrubDir || 1;
       if (s.scrub || s.dragging || fastPlay) {
         const ahead = fastPlay ? 150 : SCRUB_AHEAD;
@@ -442,18 +433,16 @@ export default function FaceAlign({ photos, onClose }) {
       if (s.playing && now - s.t0 >= dur) {
         // Faster than the screen refreshes: skip ahead by however many photos' time has passed.
         let steps = Math.max(1, Math.floor((now - s.t0) / dur));
-        const stopAtEnd = s.recorder || !o.loop;
-        if (stopAtEnd && s.i + steps >= fl.length) steps = fl.length - 1 - s.i;
+        if (!o.loop && s.i + steps >= fl.length) steps = fl.length - 1 - s.i;
         const n = (s.i + steps) % fl.length;
         // Normally wait for the sharp photo; if it's late, carry on with the preview (it sharpens once loaded).
-        // Recordings always wait, so every frame in the video is sharp.
-        const late = !s.recorder && now - s.t0 >= dur + GRACE_MS;
+        const late = now - s.t0 >= dur + GRACE_MS;
         const ready = fastPlay
           ? (frameIfReady(fl[n], o.overlays) || previewNow(fl[n]))
           : (frameNow(fl[n], o.overlays) || (late && previewNow(fl[n])));
         if (steps <= 0) {
-          if (s.recorder) finishRecording();
-          else { s.playing = false; setPlaying(false); }
+          s.playing = false;
+          setPlaying(false);
         } else if (ready) {
           // Only move on once the next photo is decoded, so playback never shows a gap.
           s.prev = fl[s.i];
@@ -462,7 +451,6 @@ export default function FaceAlign({ photos, onClose }) {
           s.t0 = Math.max(s.t0 + steps * dur, now - dur);
           s.dirty = true;
           setIdx(s.i);
-          if (s.recorder) setRecording({ done: s.i, total: fl.length });
         }
       }
 
@@ -481,67 +469,12 @@ export default function FaceAlign({ photos, onClose }) {
       s.fading = t < 1;
       s.dirty = false;
 
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, W, H);
-      try {
-        if (t < 1) {
-          const pf = frameIfReady(s.prev, o.overlays) || previewNow(s.prev);
-          if (pf) drawAligned(ctx, pf, faceFor(s.prev), o);
-        }
-        drawAligned(ctx, frame, faceFor(cur), o, fade);
-      } catch { /* a frame was released mid-draw; the next tick redraws */ }
-      if (o.showDate) {
-        const fs = Math.round(W * 0.045);
-        ctx.font = `800 ${fs}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'alphabetic';
-        ctx.lineWidth = fs * 0.18;
-        ctx.strokeStyle = 'rgba(0,0,0,.55)';
-        ctx.fillStyle = '#fff';
-        const text = fmtDate(cur.date);
-        ctx.strokeText(text, W / 2, H - fs * 1.6);
-        ctx.fillText(text, W / 2, H - fs * 1.6);
-      }
+      const prev = t < 1 ? s.prev : null;
+      paint(ctx, cur, frame, prev, prev && (frameIfReady(prev, o.overlays) || previewNow(prev)), fade, o);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [finishRecording]);
-
-  const startRecording = async () => {
-    const type = pickVideoType();
-    if (!type) return setError("This browser can't record video. Try Chrome or Edge.");
-    setDownload((d) => { if (d) URL.revokeObjectURL(d.url); return null; });
-    setPlaying(false);
-    // Make sure the opening frames are ready before the recorder starts.
-    await Promise.all(list.slice(0, PREFETCH).map((m) => new Promise((res) => {
-      const wait = () => (frameNow(m, opts.overlays) ? res() : setTimeout(wait, 50));
-      wait();
-    })));
-    const s = st.current;
-    seek(0);
-    const stream = canvasRef.current.captureStream(30);
-    const rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 8_000_000 });
-    const chunks = [];
-    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-    rec.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop());
-      const blob = new Blob(chunks, { type: type.split(';')[0] });
-      setDownload({ url: URL.createObjectURL(blob), ext: type.includes('mp4') ? 'mp4' : 'webm' });
-      setRecording(null);
-    };
-    rec.start(1000);
-    s.recorder = rec;
-    s.dirty = true;
-    setRecording({ done: 0, total: list.length });
-    setPlaying(true);
-  };
-
-  const cancelRecording = () => {
-    const s = st.current;
-    if (!s.recorder) return;
-    s.recorder.onstop = () => setRecording(null);
-    finishRecording();
-  };
+  }, []);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -551,10 +484,10 @@ export default function FaceAlign({ photos, onClose }) {
       if (e.key === 'Escape') {
         if (picking) setPicking(null);
         else if (choosingPerson) setChoosingPerson(false);
-        else if (!st.current.recorder) onClose();
+        else if (!exporting) onClose();
         return;
       }
-      if (picking || choosingPerson || st.current.recorder) return;
+      if (picking || choosingPerson || exporting) return;
       if (e.key === ' ') { e.preventDefault(); togglePlayRef.current(); }
       else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
         e.preventDefault();
@@ -583,13 +516,11 @@ export default function FaceAlign({ photos, onClose }) {
       window.removeEventListener('keyup', stopScrub);
       window.removeEventListener('blur', stopScrub);
     };
-  }, [picking, choosingPerson, onClose, seek]);
+  }, [picking, choosingPerson, exporting, onClose, seek]);
   const togglePlayRef = useRef(null);
 
-  useEffect(() => () => { if (st.current.recorder) finishRecording(); }, [finishRecording]);
-
   const cur = list[idx];
-  const busy = !!recording;
+  const busy = exporting;
   const busyRef = useRef(busy);
   busyRef.current = busy;
   const pickPhoto = useCallback((m) => { if (!busyRef.current) setPicking(m); }, []);
@@ -745,31 +676,15 @@ export default function FaceAlign({ photos, onClose }) {
             <Toggle label="Loop" checked={opts.loop} onChange={(v) => set({ loop: v })} />
           </div>
           <div className="row export">
-            {recording ? (
-              <>
-                <div className="grow">
-                  <span className="small"><span className="pulse" />Recording {recording.done + 1} / {recording.total}. Keep this tab open.</span>
-                  <div className="bar"><i style={{ width: `${((recording.done + 1) / recording.total) * 100}%` }} /></div>
-                </div>
-                <button className="btn ghost small" onClick={cancelRecording}>Cancel</button>
-              </>
-            ) : (
-              <>
-                <button className="btn primary" disabled={!list.length || analyzing} onClick={startRecording}
-                  title={analyzing ? 'Wait until all faces are found' : ''}>⬇ Save as video</button>
-                {list.length > 0 && (
-                  <span className="muted small">
-                    about {fmtDuration((list.length * Math.max(1, opts.holdMs + opts.fadeMs)) / 1000)}
-                  </span>
-                )}
-              </>
+            <button className="btn primary" disabled={!list.length || analyzing || describing}
+              title={analyzing || describing ? 'Wait until all faces are found' : ''}
+              onClick={() => { setPlaying(false); setExporting(true); }}>⬇ Save as video…</button>
+            {list.length > 0 && (
+              <span className="muted small">
+                about {fmtDuration((list.length * Math.max(1, opts.holdMs + opts.fadeMs)) / 1000)}
+              </span>
             )}
           </div>
-          {download && (
-            <div className="row">
-              <a className="btn ghost small" href={download.url} download={`face-align.${download.ext}`}>Download face-align.{download.ext}</a>
-            </div>
-          )}
         </aside>
       </section>
 
@@ -782,6 +697,10 @@ export default function FaceAlign({ photos, onClose }) {
       <Grid items={analyzed} rev={rev} onPick={pickPhoto} />
 
       <p className="privacy">🔒 Faces are found on this device. Your photos are never uploaded.</p>
+
+      {exporting && (
+        <ExportDialog list={list} opts={opts} startAt={idx} onBusy={setRendering} onClose={() => setExporting(false)} />
+      )}
 
       {choosingPerson && (
         <PersonPicker photos={photos} rev={rev} describing={describing}

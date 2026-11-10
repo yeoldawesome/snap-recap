@@ -5,7 +5,7 @@ Turn your Snapchat Memories export into a **slideshow** or a **video recap**, so
 - **Private.** Everything runs in your browser. Your photos are never uploaded anywhere.
 - **Custom run time.** Set seconds per photo, or fit the whole slideshow into a total number of minutes. For videos, cap the length of each clip and/or the total run time.
 - **Playback settings.** The ⚙ button in the slideshow and the video recap opens settings for each one separately: transition style (crossfade, fade to black, slide, zoom, none) and length, timing, slow zoom, blurred background, captions, date, progress bar, looping, and for videos the volume and playback speed.
-- **Face align.** A separate page that finds the face in every photo and moves, turns and resizes each one so the eyes line up in the same spot, then plays them as a flipbook. Pick a different face in group photos, mark the eyes by hand when none is found, and save the result as a video. Set **Who** to **One person** and click a few photos of someone to keep only the photos they're in, lined up on their face.
+- **Face align.** A separate page that finds the face in every photo and moves, turns and resizes each one so the eyes line up in the same spot, then plays them as a flipbook. Pick a different face in group photos, mark the eyes by hand when none is found, and save the result as MP4, WebM or GIF, choosing the size (480p to 4K), frame rate and quality, with a preview before and after. Set **Who** to **One person** and click a few photos of someone to keep only the photos they're in, lined up on their face.
 - **Filter by year**, play oldest or newest first, and press `H` to hide anything you don't want in your recaps.
 
 ## Use it
