@@ -9,6 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "0.10.21",
+    "@vladmandic/face-api": "1.7.15",
     "@zip.js/zip.js": "2.7.54",
     "react": "18.3.1",
     "react-dom": "18.3.1"

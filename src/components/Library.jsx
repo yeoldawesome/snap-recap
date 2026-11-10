@@ -35,7 +35,7 @@ function Num({ label, value, onChange, min, max, step = 1, suffix, hint }) {
 }
 
 export default function Library({
-  memories, visible, hidden, durations, isFiltered, settings, update, updateMode, error, onAddZips, onUnhideAll, onStartOver, onPlay,
+  memories, visible, hidden, durations, isFiltered, settings, update, updateMode, error, onAddZips, onUnhideAll, onStartOver, onPlay, onFaceAlign,
 }) {
   const input = useRef(null);
   const photos = useMemo(() => visible.filter((m) => m.kind === 'photo'), [visible]);
@@ -144,6 +144,15 @@ export default function Library({
               onClick={() => onPlay({ mode: 'video', items: videos })}>▶ Play video recap</button>
           </div>
         </article>
+      </section>
+
+      <section className="tool">
+        <div className="tool-icon" aria-hidden>🙂</div>
+        <div className="tool-body">
+          <h2>Face align</h2>
+          <p className="muted">Lines up the faces in all {photos.length} photos, moving and turning each one so the eyes match, then plays them as a flipbook you can save as a video.</p>
+        </div>
+        <button className="btn primary" disabled={!photos.length} onClick={onFaceAlign}>Open face align →</button>
       </section>
 
       <section className="panel">

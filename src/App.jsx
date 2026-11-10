@@ -7,6 +7,39 @@ import { forgetZips, rememberZips, restoreZips, savedZips } from './lib/persist.
 import Welcome from './components/Welcome.jsx';
 import Library from './components/Library.jsx';
 import Player from './components/Player.jsx';
+import FaceAlign from './components/FaceAlign.jsx';
+
+// Each mode is its own page (#/slideshow, #/recap, #/align), so the browser's Back button returns home.
+const ROUTES = ['slideshow', 'recap', 'align'];
+const routeFromHash = () => {
+  const r = window.location.hash.replace(/^#\/?/, '');
+  return ROUTES.includes(r) ? r : 'home';
+};
+
+function useRoute() {
+  const [route, setRoute] = useState(routeFromHash);
+  useEffect(() => {
+    const sync = () => setRoute(routeFromHash());
+    window.addEventListener('popstate', sync);
+    window.addEventListener('hashchange', sync);
+    return () => {
+      window.removeEventListener('popstate', sync);
+      window.removeEventListener('hashchange', sync);
+    };
+  }, []);
+  const go = useCallback((r) => {
+    if (r === 'home') {
+      // Opened from home in this tab: step back, so Back/Forward stay in step. Otherwise just go home.
+      // (history.back() is async; the popstate listener updates the route.)
+      if (window.history.state?.fromHome) return window.history.back();
+      window.history.replaceState(null, '', '#/');
+    } else {
+      window.history.pushState({ fromHome: true }, '', `#/${r}`);
+    }
+    setRoute(r);
+  }, []);
+  return [route, go];
+}
 
 export default function App() {
   const [phase, setPhase] = useState('welcome'); // welcome | importing | library
@@ -15,7 +48,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [hidden, setHidden] = useState(() => load('hidden', {}));
   const [settings, setSettings] = useState(() => withDefaults(load('settings', DEFAULT_SETTINGS)));
-  const [player, setPlayer] = useState(null);
+  const [route, go] = useRoute();
   const [durations, setDurations] = useState(() => load('durations', {})); // video id -> seconds
   const [saved, setSaved] = useState([]); // zips from last time that need a click to reopen
 
@@ -93,8 +126,9 @@ export default function App() {
     mapRef.current = new Map();
     setMemories([]);
     setSaved([]);
+    go('home');
     setPhase('welcome');
-  }, []);
+  }, [go]);
 
   const isFiltered = useCallback((m) => !!hidden[m.id], [hidden]);
 
@@ -104,18 +138,31 @@ export default function App() {
     return settings.newestFirst ? [...list].reverse() : list;
   }, [memories, isFiltered, settings.excludedYears, settings.newestFirst]);
 
+  const photos = useMemo(() => visible.filter((m) => m.kind === 'photo'), [visible]);
+  const videos = useMemo(() => visible.filter((m) => m.kind === 'video'), [visible]);
+
   const hideOne = useCallback((id) => setHidden((h) => ({ ...h, [id]: true })), []);
 
-  if (player) {
-    return (
-      <Player
-        {...player}
-        settings={settings[player.mode]}
-        update={(patch) => updateMode(player.mode, patch)}
-        onHide={hideOne}
-        onClose={() => setPlayer(null)}
-      />
-    );
+  const goHome = () => go('home');
+  if (phase === 'library' && (route === 'slideshow' || route === 'recap')) {
+    const mode = route === 'slideshow' ? 'photo' : 'video';
+    const items = mode === 'photo' ? photos : videos;
+    if (items.length) {
+      return (
+        <Player
+          key={route}
+          mode={mode}
+          items={items}
+          settings={settings[mode]}
+          update={(patch) => updateMode(mode, patch)}
+          onHide={hideOne}
+          onClose={goHome}
+        />
+      );
+    }
+  }
+  if (phase === 'library' && route === 'align') {
+    return <FaceAlign photos={photos} onClose={goHome} />;
   }
   if (phase === 'library') {
     return (
@@ -132,7 +179,8 @@ export default function App() {
         onAddZips={addZips}
         onUnhideAll={() => setHidden({})}
         onStartOver={startOver}
-        onPlay={setPlayer}
+        onPlay={({ mode }) => go(mode === 'photo' ? 'slideshow' : 'recap')}
+        onFaceAlign={() => go('align')}
       />
     );
   }

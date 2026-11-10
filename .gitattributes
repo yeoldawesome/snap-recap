@@ -1,2 +1,5 @@
 * text=auto eol=lf
 *.onnx binary
+*.task binary
+*.wasm binary
+*.bin binary
