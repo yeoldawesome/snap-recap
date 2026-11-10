@@ -82,6 +82,13 @@ const MOCKS = {
   ),
 };
 
+/** True on phones and tablets (touch screens without a mouse), where a folder picker isn't available. */
+function usePhone() {
+  const [phone] = useState(() => typeof window !== 'undefined'
+    && (window.matchMedia?.('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)));
+  return phone;
+}
+
 function Shot({ n }) {
   const [real, setReal] = useState(null); // null = checking, true = screenshot found, false = use the drawing
   return (
@@ -127,12 +134,27 @@ const FAQ = [
   ['Do I need to unzip the files?', 'No, add the .zip files as they are. If Snapchat split your export into several parts, select them all at once, or put them in one folder and choose that folder.'],
   ['Will I have to re-upload next time?', 'In Chrome and Edge, Snap Recap remembers which zips you used, so you can reopen them with one click. In other browsers you just choose them again.'],
   ["Snapchat's menus look different.", 'Snapchat moves things around now and then. You can also request your data from a computer at accounts.snapchat.com: log in, open My Data, and follow the same steps.'],
+  ['Can I use my camera roll instead?', "Yes. Tap Use my camera roll on your phone and pick photos and videos. They're sorted by when they were taken. They aren't remembered after you close the page, so you'd pick them again next time. That's fine for a few hundred; for your whole camera roll, see the next question."],
+  ['How do I use my whole iPhone camera roll?', (
+    <>
+      Picking thousands of photos on the phone itself is slow (iPhone copies each one first) and can crash Safari, so use a computer:
+      <ol className="faq-steps">
+        <li>On the iPhone, open <em>Settings → Apps → Photos</em> and set <em>Transfer to Mac or PC</em> to <em>Automatic</em>. Photos then copy as JPG, which every browser can show.</li>
+        <li>Plug the iPhone into the computer with a cable and tap <em>Trust</em> on the phone.</li>
+        <li><b>Windows:</b> open the <em>Photos</em> app, choose <em>Import</em>, pick the iPhone, and import everything into one folder. <b>Mac:</b> open <em>Image Capture</em>, pick the iPhone, and choose <em>Download All</em> to a folder.</li>
+        <li>Open Snap Recap in Chrome or Edge, click <em>Choose a folder</em>, and pick that folder. Everything inside is sorted by the date each photo or video was taken.</li>
+      </ol>
+      If you use iCloud Photos, you can also download your library from icloud.com and choose that folder. Large libraries take a while to read the first time, and Face align takes longer still, but it shows progress and time left.
+    </>
+  )],
   ['Some of my videos are missing.', "A few iPhone videos (HEVC) can't play in every browser. Those clips are skipped automatically. Chrome, Edge or Safari usually play the most."],
 ];
 
 export default function Welcome({ importing, importInfo, error, onFiles, saved = [], onRestore, onForget }) {
   const input = useRef(null);
+  const phone = usePhone();
   const folderInput = useRef(null);
+  const cameraInput = useRef(null);
   const [over, setOver] = useState(false);
 
   const drop = (e) => {
@@ -146,6 +168,11 @@ export default function Welcome({ importing, importInfo, error, onFiles, saved =
     if (!canPickWithHandles) return input.current.click();
     const items = await pickZips();
     if (items) onFiles(items);
+  };
+
+  const chooseCameraRoll = (e) => {
+    e?.stopPropagation();
+    if (!importing) cameraInput.current.click();
   };
 
   const chooseFolder = async (e) => {
@@ -202,21 +229,41 @@ export default function Welcome({ importing, importInfo, error, onFiles, saved =
             onChange={(e) => { onFiles(fromInput(e.target.files)); e.target.value = ''; }} />
           <input ref={folderInput} type="file" webkitdirectory="" multiple hidden
             onChange={(e) => { onFiles(fromInput(e.target.files)); e.target.value = ''; }} />
+          {/* On phones this opens the photo library / camera roll. */}
+          <input ref={cameraInput} type="file" accept="image/*,video/*" multiple hidden
+            onChange={(e) => { onFiles([...e.target.files].map((file) => ({ file }))); e.target.value = ''; }} />
           {importing ? (
             <>
               <div className="spinner" />
-              <strong>Reading zip {Math.min(importInfo.done + 1, importInfo.total)} of {importInfo.total}…</strong>
+              <strong>
+                {importInfo.media
+                  ? `Reading ${importInfo.done.toLocaleString()} of ${importInfo.total.toLocaleString()} photos and videos…`
+                  : `Reading zip ${Math.min(importInfo.done + 1, importInfo.total)} of ${importInfo.total}…`}
+              </strong>
               <span className="muted small">{importInfo.name}</span>
             </>
           ) : (
             <>
               <div className="upload-choices">
                 <span className="btn primary big"><span aria-hidden>⬆</span> Upload your zips</span>
-                <button className="btn ghost big" onClick={chooseFolder}><span aria-hidden>📁</span> Choose a folder</button>
+                {phone ? (
+                  <button className="btn ghost big" onClick={chooseCameraRoll}><span aria-hidden>📷</span> Use my camera roll</button>
+                ) : (
+                  <button className="btn ghost big" onClick={chooseFolder}><span aria-hidden>📁</span> Choose a folder</button>
+                )}
               </div>
               <span className="muted">
-                Select all the zip parts at once, or pick the folder they're in. You can also drag the zips or the folder onto this page.
+                {phone
+                  ? 'Pick all your Snapchat zip parts at once, or skip the export and choose photos and videos from your camera roll.'
+                  : 'Select all the zip parts at once, or pick the folder they\'re in. A folder of photos and videos (like your camera roll copied to this computer) works too, and you can drag either onto this page.'}
               </span>
+              {!phone && (
+                <span className="muted small">
+                  <button className="link" onClick={chooseCameraRoll}>Pick photos and videos</button>
+                  {' · '}
+                  <a href="#faq" onClick={(e) => { e.preventDefault(); e.stopPropagation(); const d = document.getElementById('whole-roll'); d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}>using your whole iPhone camera roll</a>
+                </span>
+              )}
             </>
           )}
         </div>
@@ -286,10 +333,10 @@ export default function Welcome({ importing, importInfo, error, onFiles, saved =
       </section>
 
       <section className="land-section">
-        <h2>Questions</h2>
+        <h2 id="faq">Questions</h2>
         <div className="faq">
           {FAQ.map(([q, a]) => (
-            <details key={q}>
+            <details key={q} id={q.includes('whole iPhone camera roll') ? 'whole-roll' : undefined}>
               <summary>{q}</summary>
               <p>{a}</p>
             </details>

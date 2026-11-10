@@ -39,6 +39,7 @@ export default function Library({
 }) {
   const input = useRef(null);
   const folderInput = useRef(null);
+  const mediaInput = useRef(null);
   const photos = useMemo(() => visible.filter((m) => m.kind === 'photo'), [visible]);
   const videos = useMemo(() => visible.filter((m) => m.kind === 'video'), [visible]);
 
@@ -92,6 +93,8 @@ export default function Library({
           const items = await pickFolder();
           if (items) onAddZips(items);
         }}>+ Add a folder</button>
+        <button className="btn ghost" title="Add photos and videos from your camera roll or computer"
+          onClick={() => mediaInput.current.click()}>+ Add photos</button>
         <button className="btn ghost" onClick={() => {
           if (confirm('Close these memories and forget the saved zips? Your zip files on disk are not touched.')) onStartOver();
         }}>Start over</button>
@@ -99,6 +102,8 @@ export default function Library({
           onChange={(e) => { onAddZips(fromInput(e.target.files)); e.target.value = ''; }} />
         <input ref={folderInput} type="file" webkitdirectory="" multiple hidden
           onChange={(e) => { onAddZips(fromInput(e.target.files)); e.target.value = ''; }} />
+        <input ref={mediaInput} type="file" accept="image/*,video/*" multiple hidden
+          onChange={(e) => { onAddZips([...e.target.files].map((file) => ({ file }))); e.target.value = ''; }} />
       </header>
 
       {error && <p className="error">{error}</p>}

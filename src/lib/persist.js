@@ -1,3 +1,4 @@
+import { isMediaFile } from './camera.js';
 // Remembers which zips were loaded so a page refresh doesn't lose them.
 // Chrome/Edge: stores a file *handle* (a pointer to the zip on disk, no copy) in IndexedDB.
 // Other browsers: stores the zip itself in IndexedDB (browser storage on this device only).
@@ -87,13 +88,16 @@ export async function restoreZips(records, interactive) {
 
 // Zips only; skips the hidden "._name.zip" copies macOS leaves on USB drives and network shares.
 const isZip = (f) => f.name.toLowerCase().endsWith('.zip') && !f.name.startsWith('._');
+// What a folder pick or drop takes in: Snapchat zips, plus photos and videos (e.g. a camera roll
+// copied to the computer). Works on Files, file handles and drop entries (the last two have no .type).
+const wanted = (f) => isZip(f) || isMediaFile({ name: f.name, type: f.type || '' });
 const MAX_DEPTH = 4; // how many folders deep to look for zips
 
-/** Every zip in a folder (and its subfolders), with handles so they can be reopened later. */
+/** Every zip, photo and video in a folder (and its subfolders), with handles so they can be reopened later. */
 async function zipsInHandle(dir, depth = 0, out = []) {
   for await (const h of dir.values()) {
     if (h.kind === 'file') {
-      if (isZip(h)) out.push({ file: await h.getFile(), handle: h });
+      if (wanted(h)) out.push({ file: await h.getFile(), handle: h });
     } else if (depth < MAX_DEPTH) {
       await zipsInHandle(h, depth + 1, out);
     }
@@ -110,7 +114,7 @@ async function zipsInEntry(dir, depth = 0, out = []) {
     if (!batch.length) break;
     for (const e of batch) {
       if (e.isFile) {
-        if (isZip(e)) out.push({ file: await new Promise((res, rej) => e.file(res, rej)) });
+        if (wanted(e)) out.push({ file: await new Promise((res, rej) => e.file(res, rej)) });
       } else if (e.isDirectory && depth < MAX_DEPTH) {
         await zipsInEntry(e, depth + 1, out);
       }
@@ -142,7 +146,7 @@ export function fromDrop(e) {
       console.warn("Couldn't read dropped folder", err);
       return [];
     }
-    return file && isZip(file) ? [{ file, handle: h || undefined }] : [];
+    return file && wanted(file) ? [{ file, handle: h || undefined }] : [];
   })).then((lists) => byName(lists.flat()));
 }
 
@@ -162,12 +166,12 @@ export async function pickZips() {
 }
 
 /** Files from an <input type=file>, including one with webkitdirectory (a whole folder). */
-export const fromInput = (fileList) => byName([...fileList].filter(isZip).map((file) => ({ file })));
+export const fromInput = (fileList) => byName([...fileList].filter(wanted).map((file) => ({ file })));
 
 export const canPickFolderWithHandle = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
 
 /**
- * Native folder picker (Chrome/Edge): every zip inside, with handles so they reopen next time.
+ * Native folder picker (Chrome/Edge): every zip, photo and video inside, with handles so they reopen next time.
  * Returns null if cancelled.
  */
 export async function pickFolder() {

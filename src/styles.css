@@ -411,3 +411,37 @@ input[type='range'] { flex: 1; accent-color: var(--accent-2); height: 24px; }
 .toast .icon-btn { flex: none; }
 @keyframes toast-in { from { transform: translateY(12px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+.faq-steps { margin: 10px 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+/* ---------- player: bottom bar (controls + date timeline) ---------- */
+.player { grid-template-rows: 1fr auto auto auto; }
+.bottom-bar { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 16px 12px; transition: opacity .3s; }
+.bottom-bar .controls { position: static; transform: none; flex-wrap: wrap; justify-content: center; }
+.player.idle .bottom-bar { opacity: 0; pointer-events: none; }
+.gear-btn { font-size: 1.15rem; }
+.gear-btn.on { background: #ffffff24 !important; }
+
+.scrubber { width: min(960px, 100%); display: flex; align-items: center; gap: 10px; }
+.scrub-end { font-size: .72rem; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.scrub-track { position: relative; flex: 1; height: 48px; min-width: 0; }
+.scrub-track::before { content: ''; position: absolute; left: 0; right: 0; bottom: 19px; height: 3px; border-radius: 99px; background: #ffffff26; }
+.scrub-bins { position: absolute; left: 0; right: 0; bottom: 23px; height: 20px; display: flex; align-items: flex-end; gap: 1px; opacity: .28; pointer-events: none; }
+.scrub-bins i { flex: 1; background: #fff; border-radius: 1px 1px 0 0; }
+.scrub-fill { position: absolute; left: 0; bottom: 19px; height: 3px; border-radius: 99px; background: var(--grad); pointer-events: none; }
+.scrub-tick { position: absolute; bottom: 0; transform: translateX(-50%); background: none; border: 0; padding: 0 2px; color: var(--muted); font-size: .66rem; line-height: 1; z-index: 1; }
+.scrub-tick::before { content: ''; position: absolute; left: 50%; bottom: 16px; width: 1px; height: 9px; background: #ffffff45; }
+.scrub-tick:hover { color: var(--text); }
+.scrub-track input[type=range] { position: absolute; left: 0; right: 0; bottom: 12px; width: 100%; height: 18px; margin: 0; background: transparent; -webkit-appearance: none; appearance: none; cursor: pointer; z-index: 2; }
+.scrub-track input[type=range]::-webkit-slider-runnable-track { background: transparent; height: 18px; }
+.scrub-track input[type=range]::-moz-range-track { background: transparent; }
+.scrub-track input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: 1px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 4px #ff5fa255; }
+.scrub-track input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 0 0 4px #ff5fa255; }
+.scrub-bubble { position: absolute; bottom: 36px; left: 0; transform: translateX(-50%); translate: 0 0; white-space: nowrap; pointer-events: none;
+  background: #16161fee; border: 1px solid #ffffff22; border-radius: 8px; padding: 2px 8px; font-size: .8rem; font-weight: 700; opacity: 0; transition: opacity .15s; z-index: 3; }
+.scrubber.dragging .scrub-bubble, .scrub-track:hover .scrub-bubble { opacity: 1; }
+.scrubber.dragging .scrub-fill { opacity: .5; }
+
+.settings .field > span { display: block; margin-bottom: 6px; }
+.settings .shown-count { margin: 0 0 8px; }
+.settings .quick-years { margin: 8px 0 0; }
+.settings .quick-years button { padding: 4px 10px; font-size: .8rem; }
+.settings .dates input { padding: 5px 6px; }

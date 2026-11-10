@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { importZips } from './lib/importer.js';
+import { importMedia, isMediaFile } from './lib/camera.js';
 import { load, save } from './lib/storage.js';
 import { DEFAULT_SETTINGS, withDefaults } from './lib/settings.js';
 import { measureDuration } from './lib/durations.js';
@@ -79,31 +80,52 @@ export default function App() {
   const update = useCallback((patch) => setSettings((s) => ({ ...s, ...patch })), []);
   const updateMode = useCallback((mode, patch) => setSettings((s) => ({ ...s, [mode]: { ...s[mode], ...patch } })), []);
 
-  // items: [{ file, handle? }]
+  // items: [{ file, handle? }]: Snapchat export zips and/or photos and videos from a camera roll.
   const addZips = useCallback(async (items, { remember = true } = {}) => {
-    items = items.filter(({ file }) => file.name.toLowerCase().endsWith('.zip'));
-    if (!items.length) {
-      return setError("Couldn't find any .zip files there. Choose the zips from your Snapchat data download, or the folder they're in.");
+    const zips = items.filter(({ file }) => file.name.toLowerCase().endsWith('.zip'));
+    const media = items.filter(({ file }) => isMediaFile(file));
+    if (!zips.length && !media.length) {
+      return setError("Couldn't find any .zip files, photos or videos there. Choose the zips from your Snapchat data download, the folder they're in, or photos from your camera roll.");
     }
-    const files = items.map((i) => i.file);
+    const files = zips.map((i) => i.file);
     setError('');
     const prevPhase = phase;
     setPhase('importing');
     try {
-      const { list } = await importZips(files, (done, total, name) => setImportInfo({ done, total, name }), mapRef.current);
+      let list = [];
+      if (files.length) {
+        ({ list } = await importZips(files, (done, total, name) => setImportInfo({ done, total, name }), mapRef.current));
+      }
+      let heicBlocked = 0;
+      if (media.length) {
+        ({ list, heicBlocked } = await importMedia(media.map((i) => i.file),
+          (done, total, name) => setImportInfo({ done, total, name, media: true }), mapRef.current));
+      }
+      const heicNote = heicBlocked
+        ? `${heicBlocked.toLocaleString()} iPhone photo${heicBlocked === 1 ? ' is' : 's are'} in HEIC format, which this browser can't show, so ${heicBlocked === 1 ? 'it was' : 'they were'} left out. Open Snap Recap in Safari on a Mac, or copy them again with iPhone Settings → Photos → Transfer to Mac or PC set to Automatic (that saves them as JPG).`
+        : '';
+      if (!list.length && heicNote) {
+        setError(heicNote);
+        setPhase(prevPhase === 'library' ? 'library' : 'welcome');
+        return;
+      }
       if (!list.length) {
-        setError("Couldn't find any photos or videos in those zips. Make sure you picked the Memories download.");
+        setError(files.length
+          ? "Couldn't find any photos or videos in those zips. Make sure you picked the Memories download."
+          : "Couldn't read any of those photos or videos.");
         setPhase(prevPhase === 'library' ? 'library' : 'welcome');
         return;
       }
       setMemories(list);
       setPhase('library');
+      if (heicNote) setError(heicNote);
       setSaved([]);
-      if (remember) rememberZips(items);
+      // Only zips are remembered; camera roll picks are too big to keep a copy of, so they're chosen again.
+      if (remember && zips.length) rememberZips(zips);
       measureVideos(list);
     } catch (e) {
       console.error(e);
-      setError(`Couldn't read that zip: ${e.message}`);
+      setError(`Couldn't read ${files.length ? 'that zip' : 'those files'}: ${e.message}`);
       setPhase(prevPhase === 'library' ? 'library' : 'welcome');
     }
   }, [phase, measureVideos]);

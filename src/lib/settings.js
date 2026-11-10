@@ -8,7 +8,48 @@ const SHARED = {
   showProgress: true,
   showOverlays: true, // Snapchat captions / stickers
   loop: false,
+  // What to show (each of the slideshow and the video recap has its own).
+  showSnap: true, // memories from a Snapchat export
+  showOther: true, // camera roll and other photos/videos added directly
+  captions: 'any', // any | with | without (Snapchat caption/sticker overlay)
+  from: '', // first day included, 'YYYY-MM-DD' ('' = from the start)
+  to: '', // last day included
+  order: 'library', // library | oldest | newest | shuffle
 };
+
+export const ORDERS = [
+  { value: 'library', label: 'Same as library' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'newest', label: 'Newest first' },
+  { value: 'shuffle', label: 'Shuffle' },
+];
+
+export const dayKey = (ms) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+/** A stable shuffle: each item's place depends only on its id and the seed. */
+function hash(str, seed) {
+  let h = 2166136261 ^ seed;
+  for (let k = 0; k < str.length; k++) h = Math.imul(h ^ str.charCodeAt(k), 16777619);
+  return h >>> 0;
+}
+
+/** Applies a mode's "what to show" settings to a list of memories. */
+export function pickShown(items, s, seed = 1) {
+  let l = items.filter((m) => (m.fromCameraRoll ? s.showOther : s.showSnap)
+    && (s.captions === 'any' || (s.captions === 'with') === !!m.overlay)
+    && (!s.from || dayKey(m.date) >= s.from)
+    && (!s.to || dayKey(m.date) <= s.to));
+  if (s.order === 'oldest') l = [...l].sort((a, b) => a.date - b.date);
+  else if (s.order === 'newest') l = [...l].sort((a, b) => b.date - a.date);
+  else if (s.order === 'shuffle') {
+    const key = new Map(l.map((m) => [m.id, hash(m.id, seed)]));
+    l = [...l].sort((a, b) => key.get(a.id) - key.get(b.id));
+  }
+  return l;
+}
 
 export const DEFAULT_SETTINGS = {
   newestFirst: false,

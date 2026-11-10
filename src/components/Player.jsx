@@ -1,13 +1,104 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { urlFor } from '../lib/importer.js';
 import { fmtDate, fmtWeekday } from '../lib/storage.js';
-import { clipCapFor, slideSecFor } from '../lib/settings.js';
+import { clipCapFor, pickShown, slideSecFor } from '../lib/settings.js';
 import PlayerSettings from './PlayerSettings.jsx';
 
 const isTyping = (t) => t?.closest?.('.settings') || ['INPUT', 'SELECT', 'TEXTAREA'].includes(t?.tagName);
+const fmtMonth = (ms) => new Date(ms).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+
+/**
+ * A timeline of the shown memories along the bottom: drag to any date to jump there.
+ * Years (or months, for a short span) are marked, and a faint bar graph shows how busy each stretch is.
+ */
+function DateScrubber({ list, i, onSeek }) {
+  const [drag, setDrag] = useState(null); // the date being dragged to, in ms
+  // Positions by date, whatever order the list plays in.
+  const sorted = useMemo(() => list.map((m, idx) => [m.date, idx]).sort((a, b) => a[0] - b[0]), [list]);
+  const min = sorted[0][0];
+  const max = sorted[sorted.length - 1][0];
+  const span = Math.max(1, max - min);
+  const pct = (t) => ((t - min) / span) * 100;
+
+  const nearest = useCallback((t) => {
+    let lo = 0;
+    let hi = sorted.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (sorted[mid][0] < t) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo > 0 && t - sorted[lo - 1][0] < sorted[lo][0] - t) lo -= 1;
+    return sorted[lo][1];
+  }, [sorted]);
+
+  const bins = useMemo(() => {
+    const n = 90;
+    const counts = new Array(n).fill(0);
+    for (const [t] of sorted) counts[Math.min(n - 1, Math.floor(((t - min) / span) * n))]++;
+    const top = Math.max(...counts);
+    return counts.map((c) => (c ? 0.15 + 0.85 * (c / top) : 0));
+  }, [sorted, min, span]);
+
+  const ticks = useMemo(() => {
+    const out = [];
+    const a = new Date(min);
+    const b = new Date(max);
+    const years = b.getFullYear() - a.getFullYear();
+    if (years >= 2) {
+      const every = years > 14 ? 2 : 1;
+      for (let y = a.getFullYear() + 1; y <= b.getFullYear(); y += every) out.push({ t: new Date(y, 0, 1).getTime(), label: String(y) });
+    } else {
+      const months = (b.getFullYear() - a.getFullYear()) * 12 + b.getMonth() - a.getMonth();
+      const every = months > 12 ? 3 : months > 6 ? 2 : 1;
+      for (let d = new Date(a.getFullYear(), a.getMonth() + 1, 1); d <= b; d = new Date(d.getFullYear(), d.getMonth() + every, 1)) {
+        out.push({ t: d.getTime(), label: d.toLocaleDateString(undefined, { month: 'short' }) + (d.getMonth() === 0 ? ` ${d.getFullYear()}` : '') });
+      }
+    }
+    return out;
+  }, [min, max]);
+
+  const cur = list[i];
+  const shownAt = drag ?? cur.date;
+  const target = list[drag === null ? i : nearest(drag)];
+  const commit = (e) => {
+    if (drag === null) return;
+    onSeek(nearest(drag));
+    setDrag(null);
+    e?.currentTarget?.blur?.(); // hand the arrow keys back to the player
+  };
+
+  if (sorted.length < 2) return null;
+  return (
+    <div className={`scrubber ${drag !== null ? 'dragging' : ''}`}>
+      <span className="scrub-end">{fmtMonth(min)}</span>
+      <div className="scrub-track">
+        <div className="scrub-bins" aria-hidden>
+          {bins.map((h, k) => <i key={k} style={{ height: `${h * 100}%` }} />)}
+        </div>
+        {ticks.map((tk) => (
+          <button key={tk.t} className="scrub-tick" style={{ left: `${pct(tk.t)}%` }} tabIndex={-1}
+            onClick={() => onSeek(nearest(tk.t))} title={`Jump to ${tk.label}`}>
+            <span>{tk.label}</span>
+          </button>
+        ))}
+        <div className="scrub-fill" style={{ width: `${pct(cur.date)}%` }} />
+        <span className="scrub-bubble" style={{ left: `clamp(48px, ${pct(shownAt)}%, calc(100% - 48px))` }}>{fmtDate(target.date)}</span>
+        <input type="range" min={min} max={max} step="any" value={shownAt} aria-label="Jump to a date"
+          aria-valuetext={fmtDate(target.date)}
+          onChange={(e) => setDrag(Number(e.target.value))}
+          onPointerUp={commit} onTouchEnd={commit} onKeyUp={commit} onBlur={commit} />
+      </div>
+      <span className="scrub-end">{fmtMonth(max)}</span>
+    </div>
+  );
+}
 
 export default function Player({ mode, items, settings: s, update, onHide, onClose }) {
-  const [list, setList] = useState(items);
+  const [seed] = useState(() => (Math.random() * 2 ** 31) | 0); // shuffle order for this viewing
+  const list = useMemo(() => pickShown(items, s, seed),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, s.showSnap, s.showOther, s.captions, s.from, s.to, s.order, seed]);
   const [i, setI] = useState(0);
   const [paused, setPaused] = useState(false);
   const [ended, setEnded] = useState(false);
@@ -19,12 +110,21 @@ export default function Player({ mode, items, settings: s, update, onHide, onClo
   const rootRef = useRef(null);
   const videoRef = useRef(null);
   const dirRef = useRef(1);
+  const curIdRef = useRef(null);
 
   const isPhoto = mode === 'photo';
   const slideSec = slideSecFor(s, list.length);
   const clipCap = clipCapFor(s, list.length);
   const cur = list[i];
-  const ready = media.id === cur?.id;
+  const ready = !!cur && media.id === cur.id;
+
+  // When the list changes (settings, or a photo hidden), stay on the same memory if it's still there.
+  useEffect(() => {
+    const n = list.findIndex((m) => m.id === curIdRef.current);
+    if (n >= 0) setI(n);
+    else setI((x) => Math.min(x, Math.max(0, list.length - 1)));
+  }, [list]);
+  useEffect(() => { curIdRef.current = cur?.id ?? null; }, [cur]);
 
   const next = useCallback(() => {
     setVProg(0);
@@ -39,10 +139,15 @@ export default function Player({ mode, items, settings: s, update, onHide, onClo
     setEnded(false);
     setI((n) => Math.max(0, n - 1));
   }, []);
+  const seek = useCallback((n) => {
+    setVProg(0);
+    setEnded(false);
+    setI((old) => { dirRef.current = n >= old ? 1 : -1; return n; });
+  }, []);
 
   // Load the current item; preload the next one.
   useEffect(() => {
-    if (!cur) return;
+    if (!cur) return undefined;
     let alive = true;
     Promise.all([urlFor(cur.main), urlFor(cur.overlay)]).then(([main, overlay]) => {
       if (alive) setMedia({ id: cur.id, main, overlay });
@@ -66,14 +171,14 @@ export default function Player({ mode, items, settings: s, update, onHide, onClo
   }, [ready, media, s.transition]);
 
   useEffect(() => {
-    if (!layers.some((l) => l.leaving)) return;
+    if (!layers.some((l) => l.leaving)) return undefined;
     const t = setTimeout(() => setLayers((ls) => ls.filter((l) => !l.leaving)), s.fadeSec * 1000 + 80);
     return () => clearTimeout(t);
   }, [layers, s.fadeSec]);
 
   // Photo timer.
   useEffect(() => {
-    if (!isPhoto || !ready || paused || ended) return;
+    if (!isPhoto || !ready || paused || ended) return undefined;
     const t = setTimeout(next, slideSec * 1000);
     return () => clearTimeout(t);
   }, [isPhoto, ready, paused, ended, next, slideSec, i]);
@@ -95,12 +200,9 @@ export default function Player({ mode, items, settings: s, update, onHide, onClo
 
   const hide = useCallback(() => {
     if (!cur) return;
-    onHide(cur.id);
-    const nl = list.filter((m) => m.id !== cur.id);
-    if (!nl.length) return onClose();
-    setList(nl);
-    setI((n) => Math.min(n, nl.length - 1));
-  }, [cur, list, onHide, onClose]);
+    if (list.length <= 1) onClose();
+    onHide(cur.id); // the list updates from the app, and playback stays at this spot
+  }, [cur, list.length, onHide, onClose]);
 
   const fullscreen = () => {
     if (document.fullscreenElement) document.exitFullscreen();
@@ -126,14 +228,19 @@ export default function Player({ mode, items, settings: s, update, onHide, onClo
     return () => window.removeEventListener('keydown', onKey);
   }, [next, prev, hide, onClose, showSettings]);
 
-  // Hide controls and cursor when the mouse is still (not while settings are open).
+  // Hide controls and cursor when nothing moves (not while settings are open). A tap also wakes them.
   useEffect(() => {
-    if (showSettings) { setIdle(false); return; }
+    if (showSettings) { setIdle(false); return undefined; }
     let t;
-    const wake = () => { setIdle(false); clearTimeout(t); t = setTimeout(() => setIdle(true), 2500); };
+    const wake = () => { setIdle(false); clearTimeout(t); t = setTimeout(() => setIdle(true), 3000); };
     wake();
     window.addEventListener('mousemove', wake);
-    return () => { clearTimeout(t); window.removeEventListener('mousemove', wake); };
+    window.addEventListener('pointerdown', wake);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('mousemove', wake);
+      window.removeEventListener('pointerdown', wake);
+    };
   }, [showSettings]);
 
   const onTime = (e) => {
@@ -148,25 +255,44 @@ export default function Player({ mode, items, settings: s, update, onHide, onClo
 
   const settingsPanel = showSettings && (
     <PlayerSettings mode={mode} s={s} update={update} slideSec={slideSec} clipCap={clipCap}
-      onClose={() => setShowSettings(false)} />
+      items={items} shown={list.length} onClose={() => setShowSettings(false)} />
   );
-  const gear = (
-    <button className={`gear ${showSettings ? 'on' : ''}`} onClick={() => setShowSettings((v) => !v)}
+  const gearBtn = (
+    <button className={`gear-btn ${showSettings ? 'on' : ''}`} onClick={() => setShowSettings((v) => !v)}
       title="Settings (S)" aria-label="Settings">⚙</button>
   );
+
+  // Nothing matches the "what to show" settings.
+  if (!cur) {
+    return (
+      <div className="player" ref={rootRef}>
+        <div className="the-end">
+          <h2>Nothing to show</h2>
+          <p className="muted">No {isPhoto ? 'photos' : 'videos'} match the “What to show” settings.</p>
+          <div className="row center">
+            <button className="btn primary" onClick={() => setShowSettings(true)}>⚙ Open settings</button>
+            <button className="btn ghost" onClick={onClose}>Back</button>
+          </div>
+        </div>
+        <button className="close" onClick={onClose} title="Close (Esc)">✕</button>
+        {settingsPanel}
+      </div>
+    );
+  }
 
   if (ended) {
     return (
       <div className="player" ref={rootRef}>
         <div className="the-end">
           <h2>That’s a wrap ✨</h2>
-          <p className="muted">{list.length} {isPhoto ? 'photos' : 'videos'} from {fmtDate(list[0].date)} to {fmtDate(list[list.length - 1].date)}</p>
+          <p className="muted">{list.length} {isPhoto ? 'photos' : 'videos'} from {fmtDate(Math.min(...list.map((m) => m.date)))} to {fmtDate(Math.max(...list.map((m) => m.date)))}</p>
           <div className="row center">
             <button className="btn primary" onClick={() => { setEnded(false); setI(0); }}>↺ Watch again</button>
+            <button className="btn ghost" onClick={() => setShowSettings(true)}>⚙ Settings</button>
             <button className="btn ghost" onClick={onClose}>Back</button>
           </div>
         </div>
-        {gear}
+        <button className="close" onClick={onClose} title="Close (Esc)">✕</button>
         {settingsPanel}
       </div>
     );
@@ -227,16 +353,19 @@ export default function Player({ mode, items, settings: s, update, onHide, onClo
         )}
       </div>
 
-      <div className="controls">
-        <button onClick={prev} title="Previous (←)">⏮</button>
-        <button className="big" onClick={() => setPaused((p) => !p)} title="Pause (space)">{paused ? '▶' : '❚❚'}</button>
-        <button onClick={next} title="Next (→)">⏭</button>
-        <span className="count">{i + 1} / {list.length}</span>
-        <button onClick={hide} title="Hide this forever (H)">🙈 Hide</button>
-        <button onClick={fullscreen} title="Fullscreen (F)">⛶</button>
+      <div className="bottom-bar">
+        <div className="controls">
+          <button onClick={prev} title="Previous (←)">⏮</button>
+          <button className="big" onClick={() => setPaused((p) => !p)} title="Pause (space)">{paused ? '▶' : '❚❚'}</button>
+          <button onClick={next} title="Next (→)">⏭</button>
+          <span className="count">{i + 1} / {list.length}</span>
+          <button onClick={hide} title="Hide this forever (H)">🙈 Hide</button>
+          <button onClick={fullscreen} title="Fullscreen (F)">⛶</button>
+          {gearBtn}
+        </div>
+        <DateScrubber list={list} i={i} onSeek={seek} />
       </div>
 
-      {gear}
       <button className="close" onClick={onClose} title="Close (Esc)">✕</button>
       {settingsPanel}
     </div>
