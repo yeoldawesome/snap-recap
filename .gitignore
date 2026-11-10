@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+# never commit anyone's personal export
+*.zip
