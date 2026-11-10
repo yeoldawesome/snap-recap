@@ -1,0 +1,15 @@
+{
+  "name": "Snap Recap",
+  "short_name": "Snap Recap",
+  "description": "Your Snapchat Memories and camera roll, played back by date. Runs on your device.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "background_color": "#0b0b10",
+  "theme_color": "#0b0b10",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

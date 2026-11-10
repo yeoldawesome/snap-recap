@@ -6,6 +6,7 @@ const SHARED = {
   showDate: true,
   showWeekday: true,
   showProgress: true,
+  fullDate: true, // in full screen: the date, small, along the bottom edge
   showOverlays: true, // Snapchat captions / stickers
   loop: false,
   // What to show (each of the slideshow and the video recap has its own).

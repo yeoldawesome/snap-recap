@@ -5,9 +5,16 @@ import wasmBinaryPath from '../../node_modules/@mediapipe/tasks-vision/wasm/visi
 import { readBlob } from './importer.js';
 import { load, save } from './storage.js';
 
-const DETECT_MAX = 640; // detection runs on a downscaled copy; plenty for faces
+const DETECT_MAX = 640; // each detection pass runs on a copy this size
 const THUMB_MAX = 420; // also used as the quick frame while scrubbing
-const MAX_FACES = 4;
+const MAX_FACES = 6;
+// Bumped when the search gets better: photos where an older search found no face are searched again.
+const SEARCH_VERSION = 2;
+// Safari (and every browser on iPhone/iPad, which all use Safari's engine) runs MediaPipe's GPU mode
+// unreliably, so faces can silently come back empty there. Its CPU mode is dependable.
+const isWebKit = typeof navigator !== 'undefined' && (/iPhone|iPad|iPod/.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  || (/Safari\//.test(navigator.userAgent) && !/Chrome|Chromium|Edg\/|OPR\//.test(navigator.userAgent)));
 // Face mesh landmark indices: eye corners (image-left eye, image-right eye) and inner lips.
 const L_EYE = [33, 133];
 const R_EYE = [362, 263];
@@ -18,8 +25,15 @@ function getLandmarker() {
   landmarkerP ||= (async () => {
     const { FaceLandmarker } = await import('@mediapipe/tasks-vision');
     const modelAssetPath = new URL('models/face_landmarker.task', document.baseURI).href;
-    const opts = (delegate) => ({ baseOptions: { modelAssetPath, delegate }, runningMode: 'IMAGE', numFaces: MAX_FACES });
+    const opts = (delegate) => ({
+      baseOptions: { modelAssetPath, delegate },
+      runningMode: 'IMAGE',
+      numFaces: MAX_FACES,
+      // Default confidence (0.5). Lower values found more faces but also accepted upside-down faces read
+      // the wrong way round (eyes swapped), which the turned searches below now handle properly.
+    });
     const fileset = { wasmLoaderPath, wasmBinaryPath };
+    if (isWebKit) return FaceLandmarker.createFromOptions(fileset, opts('CPU'));
     try {
       return await FaceLandmarker.createFromOptions(fileset, opts('GPU'));
     } catch {
@@ -59,6 +73,8 @@ function remember(rec) {
     thumbBlobs.set(rec.id, rec.thumb);
     if (!thumbs.has(rec.id)) thumbs.set(rec.id, URL.createObjectURL(rec.thumb));
   } else if (rec.failed) failed.add(rec.id);
+  // An older, weaker search that found nothing: leave it unknown so the photo is searched again.
+  if (!rec.failed && !rec.faces?.length && (rec.v || 1) < SEARCH_VERSION) return;
   faces[rec.id] = rec.faces || [];
 }
 
@@ -79,7 +95,7 @@ export function hydrate() {
     }
     // Older versions kept faces in localStorage; those still save the detection step.
     const old = load('faces', {});
-    for (const id in old) if (faces[id] === undefined) faces[id] = old[id];
+    for (const id in old) if (faces[id] === undefined && old[id]?.length) faces[id] = old[id];
   })();
   return hydrateP;
 }
@@ -223,7 +239,8 @@ const avg = (pts, ids) => {
   return [r4(x / ids.length), r4(y / ids.length)];
 };
 
-function toFace(pts) {
+function toFace(raw, map) {
+  const pts = map ? raw.map(map) : raw;
   let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
   for (const p of pts) {
     if (p.x < x0) x0 = p.x;
@@ -247,21 +264,111 @@ function fit(w, h, max) {
   return [Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k))];
 }
 
+// How much two faces overlap (0..1), to drop the same face found by two passes.
+function overlap(a, b) {
+  const w = Math.min(a.box[2], b.box[2]) - Math.max(a.box[0], b.box[0]);
+  const h = Math.min(a.box[3], b.box[3]) - Math.max(a.box[1], b.box[1]);
+  if (w <= 0 || h <= 0) return 0;
+  return (w * h) / Math.min(area(a), area(b));
+}
+function addUnique(list, more) {
+  for (const f of more) if (!list.some((g) => overlap(f, g) > 0.4)) list.push(f);
+}
+
+/**
+ * Runs the face finder on part of the photo (sx, sy, sw, sh in 0..1), optionally turned by `deg`
+ * degrees clockwise, and returns the faces in whole-photo coordinates.
+ */
+async function detectIn(lm, bmp, sx, sy, sw, sh, deg = 0) {
+  const pw = bmp.width * sw;
+  const ph = bmp.height * sh;
+  const t = (deg * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(t));
+  const sin = Math.abs(Math.sin(t));
+  // The turned piece's bounding box, scaled to the detection size.
+  const [cw, ch] = fit(pw * cos + ph * sin, pw * sin + ph * cos, DETECT_MAX);
+  const k = cw / (pw * cos + ph * sin);
+  const c = canvas(cw, ch);
+  const ctx = c.getContext('2d');
+  ctx.translate(cw / 2, ch / 2);
+  ctx.rotate(t);
+  ctx.drawImage(bmp, bmp.width * sx, bmp.height * sy, pw, ph, (-pw * k) / 2, (-ph * k) / 2, pw * k, ph * k);
+  const res = lm.detect(c);
+  // How tilted each face is in the turned canvas: a face found far from upright is often read the wrong
+  // way round (eyes swapped), so callers prefer the angle where the face sits most upright.
+  const roll = (pts) => {
+    const [a, b] = [pts[L_EYE[0]], pts[R_EYE[1]]];
+    return Math.abs(Math.atan2((b.y - a.y) * ch, (b.x - a.x) * cw) * (180 / Math.PI));
+  };
+  // Back from the turned canvas to the piece, then to the whole photo.
+  const ct = Math.cos(t);
+  const st = Math.sin(t);
+  const map = (p) => {
+    const px = p.x * cw - cw / 2;
+    const py = p.y * ch - ch / 2;
+    const x = (px * ct + py * st) / (pw * k) + 0.5;
+    const y = (-px * st + py * ct) / (ph * k) + 0.5;
+    return { x: sx + x * sw, y: sy + y * sh };
+  };
+  return (res.faceLandmarks || []).map((pts) => Object.assign(toFace(pts, map), { roll: roll(pts) }));
+}
+
+const clean = ({ roll, ...f }) => f; // the tilt is only needed while searching
+
+// Angles tried when the upright search finds nothing: heads tilted a lot, people lying down, and
+// phone photos whose rotation the browser ignored. Stops at the first angle that finds a face.
+const TURNS = [90, -90, 30, -30, 180];
+const UPRIGHT = 40; // degrees: a face tilted less than this in the turned view is trusted
+
+/**
+ * Looks for faces the quick way first (the whole photo, upright). If that finds nothing, or only small
+ * faces (a wide or group shot), it also looks at four overlapping zoomed-in quarters, which finds faces
+ * too small to see in the whole view. If there's still nothing, it tries the photo turned at a few angles.
+ */
+async function findFaces(lm, bmp) {
+  const found = await detectIn(lm, bmp, 0, 0, 1, 1);
+  const biggest = found.reduce((mx, f) => Math.max(mx, f.box[2] - f.box[0]), 0);
+  const side = Math.min(bmp.width, bmp.height);
+  if (found.length < MAX_FACES && biggest < 0.18 && side >= 480) {
+    // Big photos get a finer grid (3x3 pieces), so faces a few percent of the photo wide still show up.
+    const n = side >= 1500 ? 3 : 2;
+    const size = n === 3 ? 0.42 : 0.6;
+    const step = (1 - size) / (n - 1);
+    for (let yi = 0; yi < n; yi++) {
+      for (let xi = 0; xi < n; xi++) addUnique(found, await detectIn(lm, bmp, xi * step, yi * step, size, size));
+    }
+  }
+  if (!found.length) {
+    // Turned searches: take the first angle where the face sits upright; otherwise the most upright one seen.
+    let best = [];
+    for (const deg of TURNS) {
+      const got = await detectIn(lm, bmp, 0, 0, 1, 1, deg);
+      if (!got.length) continue;
+      const tilt = Math.min(...got.map((f) => f.roll));
+      if (!best.length || tilt < best.tilt) best = Object.assign(got, { tilt });
+      if (tilt < UPRIGHT) break;
+    }
+    addUnique(found, best);
+  }
+  return found.sort((x, y) => area(y) - area(x)).slice(0, MAX_FACES).map(clean);
+}
+
+/** Finds the faces in a decoded image (largest first), loading the face finder if needed. */
+export async function findFacesIn(bmp) {
+  return findFaces(await getLandmarker(), bmp);
+}
+
 /** Find faces in one photo (skipped if already known) and make its thumbnail. */
 async function analyzeOne(m, landmarker) {
   const bmp = await createImageBitmap(await readBlob(m.main));
   try {
     let found = faces[m.id];
-    if (found === undefined) {
-      const c = canvas(...fit(bmp.width, bmp.height, DETECT_MAX));
-      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
-      const res = (await landmarker()).detect(c);
-      found = (res.faceLandmarks || []).map(toFace).sort((a, b) => area(b) - area(a));
-    }
+    if (found === undefined) found = await findFaces(await landmarker(), bmp);
     const t = canvas(...fit(bmp.width, bmp.height, THUMB_MAX));
     t.getContext('2d').drawImage(bmp, 0, 0, t.width, t.height);
     const thumb = await new Promise((res) => t.toBlob(res, 'image/jpeg', 0.75));
-    store(thumb ? { id: m.id, faces: found, thumb } : { id: m.id, faces: found, failed: true });
+    const v = SEARCH_VERSION;
+    store(thumb ? { id: m.id, faces: found, thumb, v } : { id: m.id, faces: found, failed: true, v });
   } finally {
     bmp.close();
   }
@@ -372,7 +479,7 @@ async function describeOne(m, api) {
       const d = await api.computeFaceDescriptor(c);
       next.push({ ...f, d: Array.from(d, (v) => Math.round(v * 1000) / 1000) });
     }
-    store({ id: m.id, faces: next, thumb: thumbBlobs.get(m.id) });
+    store({ id: m.id, faces: next, thumb: thumbBlobs.get(m.id), v: SEARCH_VERSION });
     changed();
   } finally {
     img.close();

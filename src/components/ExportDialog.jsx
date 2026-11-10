@@ -129,10 +129,10 @@ export default function ExportDialog({ list, opts, startAt, onBusy, onClose }) {
           <div className="export-preview">
             {status === 'done' && result ? (
               result.ext === 'gif'
-                ? <img src={result.url} alt="Saved GIF" style={{ aspectRatio: `${result.w} / ${result.h}` }} />
-                : <video src={result.url} controls autoPlay loop playsInline style={{ aspectRatio: `${result.w} / ${result.h}` }} />
+                ? <img src={result.url} alt="Saved GIF" style={{ '--ar': result.w / result.h }} />
+                : <video src={result.url} controls autoPlay loop playsInline style={{ '--ar': result.w / result.h }} />
             ) : (
-              <canvas ref={canvasRef} width={W} height={H} style={{ aspectRatio: `${W} / ${H}` }} />
+              <canvas ref={canvasRef} width={W} height={H} style={{ '--ar': W / H }} />
             )}
             <small className="muted">
               {status === 'done' ? 'Preview of the saved file' : rendering ? 'Rendering…' : `Preview · ${W} × ${H}`}

@@ -594,7 +594,7 @@ export default function FaceAlign({ photos, onClose }) {
 
       <section className="align-main">
         <div className="align-stage">
-          <div className="canvas-wrap" style={{ aspectRatio: `${W} / ${H}` }}>
+          <div className="canvas-wrap" style={{ aspectRatio: `${W} / ${H}`, '--ar': W / H }}>
             <canvas ref={canvasRef} width={W} height={H} />
             {!list.length && (
               <div className="canvas-empty muted">

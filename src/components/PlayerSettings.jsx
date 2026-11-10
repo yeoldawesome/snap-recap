@@ -183,6 +183,7 @@ export default function PlayerSettings({ mode, s, update, slideSec, clipCap, ite
         <Toggle label="Show date" checked={s.showDate} onChange={set('showDate')} />
         <Toggle label="Show day of the week" checked={s.showWeekday} onChange={set('showWeekday')} />
         <Toggle label="Show progress bar" checked={s.showProgress} onChange={set('showProgress')} />
+        <Toggle label="Date in full screen (small, along the bottom)" checked={s.fullDate} onChange={set('fullDate')} />
       </section>
 
       <section>

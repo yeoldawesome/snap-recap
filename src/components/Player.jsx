@@ -107,6 +107,10 @@ export default function Player({ mode, items, settings: s, update, onHide, onClo
   const [vProg, setVProg] = useState(0);
   const [idle, setIdle] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  // Full screen: the browser's own where it has one (computers, Android, iPad); on iPhone, where Safari
+  // only allows that for its own video player, the player fills the page itself instead.
+  const [full, setFull] = useState(false);
+  const [nativeFull, setNativeFull] = useState(false);
   const rootRef = useRef(null);
   const videoRef = useRef(null);
   const dirRef = useRef(1);
@@ -204,15 +208,45 @@ export default function Player({ mode, items, settings: s, update, onHide, onClo
     onHide(cur.id); // the list updates from the app, and playback stays at this spot
   }, [cur, list.length, onHide, onClose]);
 
+  useEffect(() => {
+    const sync = () => {
+      const on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+      setNativeFull(on);
+      setFull(on);
+    };
+    document.addEventListener('fullscreenchange', sync);
+    document.addEventListener('webkitfullscreenchange', sync);
+    return () => {
+      document.removeEventListener('fullscreenchange', sync);
+      document.removeEventListener('webkitfullscreenchange', sync);
+    };
+  }, []);
+
   const fullscreen = () => {
-    if (document.fullscreenElement) document.exitFullscreen();
-    else rootRef.current?.requestFullscreen?.();
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+      return;
+    }
+    if (full) { setFull(false); return; } // leaving the fill-the-page version
+    const el = rootRef.current;
+    const req = el?.requestFullscreen || el?.webkitRequestFullscreen;
+    // iPhone Safari reports full screen as unavailable (or has the method but ignores it).
+    if (!req || !(document.fullscreenEnabled || document.webkitFullscreenEnabled)) { setFull(true); return; }
+    const inFull = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+    try {
+      Promise.resolve(req.call(el)).catch(() => setFull(true));
+    } catch {
+      setFull(true);
+    }
+    // If the browser quietly refused, fill the page instead.
+    setTimeout(() => { if (!inFull()) setFull(true); }, 500);
   };
 
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') {
         if (showSettings) return setShowSettings(false);
+        if (full && !nativeFull) return setFull(false);
         if (!document.fullscreenElement) onClose();
         return;
       }
@@ -226,7 +260,7 @@ export default function Player({ mode, items, settings: s, update, onHide, onClo
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [next, prev, hide, onClose, showSettings]);
+  }, [next, prev, hide, onClose, showSettings, full, nativeFull]);
 
   // Hide controls and cursor when nothing moves (not while settings are open). A tap also wakes them.
   useEffect(() => {
@@ -301,7 +335,7 @@ export default function Player({ mode, items, settings: s, update, onHide, onClo
   const showCaption = s.showDate || s.showWeekday;
 
   return (
-    <div className={`player ${idle ? 'idle' : ''}`} ref={rootRef}>
+    <div className={`player ${idle ? 'idle' : ''} ${full ? 'full' : ''}`} ref={rootRef}>
       <div className="stage">
         {layers.map((l) => {
           const top = !l.leaving;
@@ -337,7 +371,13 @@ export default function Player({ mode, items, settings: s, update, onHide, onClo
         })}
       </div>
 
-      {showCaption && (
+      {full && s.fullDate && (
+        <div className="full-date">
+          {s.showWeekday && `${fmtWeekday(cur.date)} · `}{fmtDate(cur.date)}
+        </div>
+      )}
+
+      {showCaption && !full && (
         <div className="caption">
           {s.showWeekday && <span className="weekday">{fmtWeekday(cur.date)}</span>}
           {s.showDate && <span className="date">{fmtDate(cur.date)}</span>}
@@ -360,7 +400,8 @@ export default function Player({ mode, items, settings: s, update, onHide, onClo
           <button onClick={next} title="Next (→)">⏭</button>
           <span className="count">{i + 1} / {list.length}</span>
           <button onClick={hide} title="Hide this forever (H)">🙈 Hide</button>
-          <button onClick={fullscreen} title="Fullscreen (F)">⛶</button>
+          <button onClick={fullscreen} className={full ? 'on' : ''} title={full ? 'Exit full screen (F)' : 'Full screen (F)'}
+            aria-label={full ? 'Exit full screen' : 'Full screen'}>{full ? '🗗' : '⛶'}</button>
           {gearBtn}
         </div>
         <DateScrubber list={list} i={i} onSeek={seek} />
