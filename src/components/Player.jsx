@@ -3,6 +3,7 @@ import { urlFor } from '../lib/importer.js';
 import { fmtDate, fmtWeekday } from '../lib/storage.js';
 import { clipCapFor, pickShown, slideSecFor } from '../lib/settings.js';
 import PlayerSettings from './PlayerSettings.jsx';
+import { drawContain, prepareCast } from '../lib/cast.js';
 
 const isTyping = (t) => t?.closest?.('.settings') || ['INPUT', 'SELECT', 'TEXTAREA'].includes(t?.tagName);
 const fmtMonth = (ms) => new Date(ms).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
@@ -111,16 +112,61 @@ export default function Player({ mode, items, settings: s, update, onHide, onClo
   // only allows that for its own video player, the player fills the page itself instead.
   const [full, setFull] = useState(false);
   const [nativeFull, setNativeFull] = useState(false);
+  const [casting, setCasting] = useState(false); // iPhone: showing in Safari's full-screen video player
   const rootRef = useRef(null);
   const videoRef = useRef(null);
   const dirRef = useRef(1);
   const curIdRef = useRef(null);
+  const castRef = useRef(null); // iPhone: real full screen through Safari's video player
+  const live = useRef({});
 
   const isPhoto = mode === 'photo';
   const slideSec = slideSecFor(s, list.length);
   const clipCap = clipCapFor(s, list.length);
   const cur = list[i];
   const ready = !!cur && media.id === cur.id;
+  live.current = { s, cur };
+
+  // iPhone full screen: copy what the player shows (the frames in the stage, fading as they do) onto
+  // the canvas that feeds Safari's full-screen video, with the small date along the bottom.
+  useEffect(() => {
+    const seen = new WeakMap(); // frame element -> when it first appeared, for its fade-in
+    const draw = (ctx, w, h) => {
+      const { s: o, cur: c } = live.current;
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, w, h);
+      const now = performance.now();
+      const frames = rootRef.current ? [...rootRef.current.querySelectorAll('.stage .frame')] : [];
+      frames.forEach((f, k) => {
+        if (!seen.has(f)) seen.set(f, now);
+        const top = k === frames.length - 1;
+        const fade = o.transition === 'none' || !top ? 1 : Math.min(1, (now - seen.get(f)) / (o.fadeSec * 1000));
+        const main = f.querySelector('.kb video, .kb img');
+        if (main) drawContain(ctx, main, w, h, fade);
+        const over = f.querySelector('.kb video + img, .kb img + img');
+        if (over) drawContain(ctx, over, w, h, fade);
+      });
+      if (o.fullDate && c) {
+        const fs = Math.max(14, Math.round(Math.min(w, h) * 0.032));
+        ctx.font = `700 ${fs}px -apple-system, system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+        const text = `${o.showWeekday ? `${fmtWeekday(c.date)} · ` : ''}${fmtDate(c.date)}`;
+        ctx.lineWidth = fs * 0.3;
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = 'rgba(0,0,0,.6)';
+        ctx.strokeText(text, w / 2, h - fs * 1.1);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(text, w / 2, h - fs * 1.1);
+      }
+    };
+    castRef.current = prepareCast(draw, {
+      onEnd: () => setCasting(false),
+      onPause: () => setPaused(true),
+      onPlay: () => setPaused(false),
+    });
+    return () => { castRef.current?.stop(); castRef.current = null; };
+  }, []);
 
   // When the list changes (settings, or a photo hidden), stay on the same memory if it's still there.
   useEffect(() => {
@@ -223,6 +269,10 @@ export default function Player({ mode, items, settings: s, update, onHide, onClo
   }, []);
 
   const fullscreen = () => {
+    // iPhone: real full screen through Safari's video player (falls back to filling the page).
+    if (castRef.current && !full) {
+      if (castRef.current.enter()) { setCasting(true); return; }
+    }
     if (document.fullscreenElement || document.webkitFullscreenElement) {
       (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
       return;
