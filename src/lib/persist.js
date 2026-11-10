@@ -85,15 +85,65 @@ export async function restoreZips(records, interactive) {
   return { files, needsPermission };
 }
 
-const isZip = (f) => f.name.toLowerCase().endsWith('.zip');
+// Zips only; skips the hidden "._name.zip" copies macOS leaves on USB drives and network shares.
+const isZip = (f) => f.name.toLowerCase().endsWith('.zip') && !f.name.startsWith('._');
+const MAX_DEPTH = 4; // how many folders deep to look for zips
 
-/** Collect files (and handles where supported) from a drop event. Must be called synchronously in the handler. */
+/** Every zip in a folder (and its subfolders), with handles so they can be reopened later. */
+async function zipsInHandle(dir, depth = 0, out = []) {
+  for await (const h of dir.values()) {
+    if (h.kind === 'file') {
+      if (isZip(h)) out.push({ file: await h.getFile(), handle: h });
+    } else if (depth < MAX_DEPTH) {
+      await zipsInHandle(h, depth + 1, out);
+    }
+  }
+  return out;
+}
+
+/** The same for browsers without handles (a dropped folder in Firefox/Safari). */
+async function zipsInEntry(dir, depth = 0, out = []) {
+  const reader = dir.createReader();
+  for (;;) {
+    // readEntries returns a batch at a time; an empty batch means done.
+    const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+    if (!batch.length) break;
+    for (const e of batch) {
+      if (e.isFile) {
+        if (isZip(e)) out.push({ file: await new Promise((res, rej) => e.file(res, rej)) });
+      } else if (e.isDirectory && depth < MAX_DEPTH) {
+        await zipsInEntry(e, depth + 1, out);
+      }
+    }
+  }
+  return out;
+}
+
+const byName = (list) => list.sort((a, b) => a.file.name.localeCompare(b.file.name, undefined, { numeric: true }));
+
+/**
+ * Collect zips (and handles where supported) from a drop of files and/or folders.
+ * Must be called synchronously in the drop handler.
+ */
 export function fromDrop(e) {
   const items = [...(e.dataTransfer.items || [])].filter((i) => i.kind === 'file');
-  const pending = items.map((i) => ({ file: i.getAsFile(), handle: i.getAsFileSystemHandle?.() }));
-  return Promise.all(
-    pending.map(async ({ file, handle }) => ({ file, handle: (await handle?.catch(() => null)) || undefined })),
-  ).then((list) => list.filter((x) => x.file && isZip(x.file) && (!x.handle || x.handle.kind === 'file')));
+  // Everything has to be grabbed now; the browser clears the drop data once the handler returns.
+  const pending = items.map((i) => ({
+    file: i.getAsFile(),
+    entry: i.webkitGetAsEntry?.(),
+    handle: i.getAsFileSystemHandle?.(),
+  }));
+  return Promise.all(pending.map(async ({ file, entry, handle }) => {
+    const h = (await handle?.catch(() => null)) || null;
+    try {
+      if (h?.kind === 'directory') return await zipsInHandle(h);
+      if (entry?.isDirectory) return await zipsInEntry(entry);
+    } catch (err) {
+      console.warn("Couldn't read dropped folder", err);
+      return [];
+    }
+    return file && isZip(file) ? [{ file, handle: h || undefined }] : [];
+  })).then((lists) => byName(lists.flat()));
 }
 
 export const canPickWithHandles = typeof window !== 'undefined' && 'showOpenFilePicker' in window;
@@ -111,4 +161,21 @@ export async function pickZips() {
   }
 }
 
-export const fromInput = (fileList) => [...fileList].filter(isZip).map((file) => ({ file }));
+/** Files from an <input type=file>, including one with webkitdirectory (a whole folder). */
+export const fromInput = (fileList) => byName([...fileList].filter(isZip).map((file) => ({ file })));
+
+export const canPickFolderWithHandle = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+
+/**
+ * Native folder picker (Chrome/Edge): every zip inside, with handles so they reopen next time.
+ * Returns null if cancelled.
+ */
+export async function pickFolder() {
+  let dir;
+  try {
+    dir = await window.showDirectoryPicker({ id: 'snap-recap', mode: 'read' });
+  } catch {
+    return null;
+  }
+  return byName(await zipsInHandle(dir));
+}

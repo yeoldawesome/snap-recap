@@ -7,6 +7,7 @@ import {
 import { fmtDate, fmtDuration, load, save } from '../lib/storage.js';
 import { paint } from '../lib/export.js';
 import ExportDialog from './ExportDialog.jsx';
+import { AlignStatus, Toasts, fmtLeft, notify, useEta } from './AlignStatus.jsx';
 
 const DEFAULTS = {
   aspect: '9:16',
@@ -201,7 +202,7 @@ function FaceCrop({ m, f }) {
  * Pick a few faces of the person to follow. Once there's an example, the faces that look most
  * like them are listed first, so adding more is quick.
  */
-function PersonPicker({ photos, rev, describing, onClose, onChange }) {
+function PersonPicker({ photos, rev, describing, finding, onClose, onChange }) {
   const PAGE = 120;
   const [limit, setLimit] = useState(PAGE);
   const person = personOf();
@@ -243,7 +244,8 @@ function PersonPicker({ photos, rev, describing, onClose, onChange }) {
         <p className="muted small">
           Click 3 to 5 faces of the person, ideally from different times and angles. Only photos with them in it are kept,
           and their face is the one lined up.
-          {describing && ' Still learning faces, so the suggestions get better as it goes.'}
+          {finding && ` Still finding faces (${finding.done.toLocaleString()} of ${finding.total.toLocaleString()} photos checked), so more will appear. Suggestions start once that's done.`}
+          {!finding && describing && ' Still learning faces, so the suggestions get better as it goes.'}
         </p>
         <div className="face-scroll">
           {chosen.length > 0 && (
@@ -304,7 +306,13 @@ export default function FaceAlign({ photos, onClose }) {
   const [picking, setPicking] = useState(null);
   const [person, setPersonState] = useState(personOf);
   const [choosingPerson, setChoosingPerson] = useState(false);
-  const [describe, setDescribe] = useState({ done: 0, total: 0 });
+  const [describe, setDescribe] = useState({ done: 0, total: 0, checking: false });
+  const [toasts, setToasts] = useState([]);
+  const toast = useCallback((title, body = '') => {
+    setToasts((t) => [...t, { id: `${Date.now()}-${Math.random()}`, title, body }]);
+    notify(title, body); // only shows when this tab is in the background and notifications are allowed
+  }, []);
+  const dismissToast = useCallback((id) => setToasts((t) => t.filter((x) => x.id !== id)), []);
   const updatePerson = (patch) => { setPerson(patch); setPersonState(personOf()); setRev((r) => r + 1); };
   const refsChanged = useCallback(() => { setPersonState(personOf()); setRev((r) => r + 1); }, []);
   const canvasRef = useRef(null);
@@ -322,12 +330,20 @@ export default function FaceAlign({ photos, onClose }) {
   // Find faces in every photo (results are remembered, so a second visit is quick).
   useEffect(() => {
     let last = 0;
+    let worked = null; // whether there was anything left to do (so a quick reload doesn't announce itself)
     return analyzeAll(photos, (done, total) => {
       setProgress({ done, total });
+      if (worked === null) worked = done < total;
       const now = performance.now();
       if (done === total || now - last > 400) { last = now; setRev((r) => r + 1); }
+      if (done === total && worked) {
+        worked = false;
+        const n = photos.filter((m) => facesOf(m).length).length;
+        toast('All faces found', `${n.toLocaleString()} of ${total.toLocaleString()} photos have a face. ${
+          personOf().on ? 'Learning faces for One person next.' : 'Face recognition (Who → One person) is ready to use.'}`);
+      }
     }, (e) => setError(`Couldn't load the face finder: ${e.message || e}`));
-  }, [photos]);
+  }, [photos, toast]);
 
   const analyzing = progress.done < progress.total;
 
@@ -335,13 +351,37 @@ export default function FaceAlign({ photos, onClose }) {
   useEffect(() => {
     if (!person.on || analyzing) return undefined;
     let last = 0;
+    let worked = null;
+    setDescribe((d) => ({ ...d, checking: true }));
     return describeAll(photos, (done, total) => {
-      setDescribe({ done, total });
+      setDescribe({ done, total, checking: false });
+      if (worked === null) worked = done < total;
       const now = performance.now();
       if (done === total || now - last > 500) { last = now; setRev((r) => r + 1); }
-    }, (e) => setError(`Couldn't load the face recognizer: ${e.message || e}`));
-  }, [photos, person.on, analyzing]);
-  const describing = person.on && describe.done < describe.total;
+      if (done === total && worked) {
+        worked = false;
+        const n = photos.filter(faceFor).length;
+        toast('Face recognition is ready', personOf().refs.length
+          ? `Found them in ${n.toLocaleString()} photos.`
+          : 'Choose a few photos of the person to follow.');
+      }
+    }, (e) => {
+      setDescribe((d) => ({ ...d, checking: false }));
+      setError(`Couldn't load the face recognizer: ${e.message || e}`);
+    });
+  }, [photos, person.on, analyzing, toast]);
+  const describing = person.on && (describe.checking || describe.done < describe.total);
+  const findEta = useEta(progress.done, progress.total);
+  const learnEta = useEta(describe.done, describe.total);
+
+  // Show progress in the tab title, so it's visible from other tabs.
+  useEffect(() => {
+    const base = 'Snap Recap';
+    const p = (d, t) => Math.floor((d / Math.max(1, t)) * 100);
+    document.title = analyzing ? `(${p(progress.done, progress.total)}%) Finding faces · ${base}`
+      : describing ? `(${p(describe.done, describe.total)}%) Learning faces · ${base}` : `Face align · ${base}`;
+  }, [analyzing, describing, progress, describe]);
+  useEffect(() => () => { document.title = 'Snap Recap'; }, []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const analyzed = useMemo(() => photos.filter((m) => isAnalyzed(m) && inRange(m, opts.from, opts.to)), [photos, rev, opts.from, opts.to]);
   const list = useMemo(() => analyzed.filter(faceFor), [analyzed, rev]);
@@ -355,6 +395,8 @@ export default function FaceAlign({ photos, onClose }) {
   const outside = useMemo(() => (opts.from || opts.to ? photos.filter((m) => !inRange(m, opts.from, opts.to)).length : 0),
     [photos, opts.from, opts.to]);
   const noFace = analyzed.length - list.length;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const withFaces = useMemo(() => photos.filter((m) => facesOf(m).length).length, [photos, rev]);
 
   // Playback state lives in a ref so the draw loop doesn't restart on every change.
   const st = useRef({ i: 0, prev: null, t0: 0, dirty: true, playing: false, rendering: false });
@@ -546,12 +588,9 @@ export default function FaceAlign({ photos, onClose }) {
 
       {error && <p className="error">{error}</p>}
 
-      {analyzing && (
-        <div className="analyze">
-          <span><span className="pulse" />Finding faces… {progress.done} / {progress.total}</span>
-          <div className="bar"><i style={{ width: `${(progress.done / Math.max(1, progress.total)) * 100}%` }} /></div>
-        </div>
-      )}
+      <AlignStatus progress={progress} describe={describe} analyzing={analyzing} describing={describing}
+        personOn={person.on} refCount={person.refs.length} withFaces={withFaces} matched={list.length}
+        error={error} onChoosePerson={() => setChoosingPerson(true)} />
 
       <section className="align-main">
         <div className="align-stage">
@@ -617,11 +656,11 @@ export default function FaceAlign({ photos, onClose }) {
                     {person.refs.length ? 'change' : 'choose them'}
                   </button>
                 </p>
-                {describing && (
-                  <div className="analyze">
-                    <span className="small"><span className="pulse" />Learning faces… {describe.done} / {describe.total}</span>
-                    <div className="bar"><i style={{ width: `${(describe.done / Math.max(1, describe.total)) * 100}%` }} /></div>
-                  </div>
+                {(analyzing || describing) && (
+                  <p className="muted small note">
+                    {analyzing ? 'Matching starts once all faces are found (see the progress at the top).'
+                      : `Learning faces… ${describe.done.toLocaleString()} / ${describe.total.toLocaleString()}${learnEta ? ` · ${fmtLeft(learnEta.leftMs)}` : ''}`}
+                  </p>
                 )}
                 <Num label="Match" min={0.35} max={0.7} step={0.01} value={person.tolerance}
                   hint={person.tolerance < 0.45 ? 'strict' : person.tolerance < 0.56 ? 'normal' : 'loose'}
@@ -677,7 +716,7 @@ export default function FaceAlign({ photos, onClose }) {
           </div>
           <div className="row export">
             <button className="btn primary" disabled={!list.length || analyzing || describing}
-              title={analyzing || describing ? 'Wait until all faces are found' : ''}
+              title={analyzing ? 'Available once all faces are found' : describing ? 'Available once face learning finishes' : ''}
               onClick={() => { setPlaying(false); setExporting(true); }}>⬇ Save as video…</button>
             {list.length > 0 && (
               <span className="muted small">
@@ -685,6 +724,12 @@ export default function FaceAlign({ photos, onClose }) {
               </span>
             )}
           </div>
+          {(analyzing || describing) && (
+            <p className="muted small note">
+              Saving unlocks when {analyzing ? 'all faces are found' : 'face learning finishes'}
+              {(analyzing ? findEta : learnEta) ? ` (${fmtLeft((analyzing ? findEta : learnEta).leftMs)})` : ''}.
+            </p>
+          )}
         </aside>
       </section>
 
@@ -702,8 +747,10 @@ export default function FaceAlign({ photos, onClose }) {
         <ExportDialog list={list} opts={opts} startAt={idx} onBusy={setRendering} onClose={() => setExporting(false)} />
       )}
 
+      <Toasts items={toasts} onDismiss={dismissToast} />
+
       {choosingPerson && (
-        <PersonPicker photos={photos} rev={rev} describing={describing}
+        <PersonPicker photos={photos} rev={rev} describing={describing} finding={analyzing ? progress : null}
           onClose={() => setChoosingPerson(false)} onChange={refsChanged} />
       )}
 

@@ -82,7 +82,9 @@ export default function App() {
   // items: [{ file, handle? }]
   const addZips = useCallback(async (items, { remember = true } = {}) => {
     items = items.filter(({ file }) => file.name.toLowerCase().endsWith('.zip'));
-    if (!items.length) return setError('Please choose the .zip files from your Snapchat data download.');
+    if (!items.length) {
+      return setError("Couldn't find any .zip files there. Choose the zips from your Snapchat data download, or the folder they're in.");
+    }
     const files = items.map((i) => i.file);
     setError('');
     const prevPhase = phase;

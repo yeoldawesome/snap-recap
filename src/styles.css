@@ -387,3 +387,27 @@ input[type='range'] { flex: 1; accent-color: var(--accent-2); height: 24px; }
   .export-body { grid-template-columns: 1fr; }
   .export-preview canvas, .export-preview video, .export-preview img { max-height: 40vh; }
 }
+.upload-choices { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+.topbar { flex-wrap: wrap; }
+/* face align: what's happening now */
+.status-panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 18px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 10px; }
+.stages { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.stage { display: flex; gap: 12px; align-items: flex-start; }
+.stage-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.stage-head { display: flex; justify-content: space-between; gap: 8px; }
+.stage-icon { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: .8rem; font-weight: 800; background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); }
+.stage-icon .pulse { margin: 0; }
+.stage.done .stage-icon, .stage-icon.done { background: #2fbf7126; border-color: #2fbf7166; color: #4fd98d; }
+.stage.error .stage-icon { background: #ff4d6a26; border-color: #ff4d6a66; color: #ff7a8a; }
+.stage.waiting { opacity: .75; }
+.stage.done b { color: var(--muted); }
+.status-now { margin: 0; padding: 8px 12px; border-radius: 10px; background: var(--panel-2); }
+.status-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; align-items: center; }
+.status-ready { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; background: var(--panel); border: 1px solid #2fbf7144; border-radius: var(--radius); padding: 10px 16px; margin-bottom: 16px; }
+.status-ready > span:nth-child(2) { flex: 1 1 220px; }
+.toasts { position: fixed; right: 16px; bottom: 16px; z-index: 40; display: flex; flex-direction: column; gap: 8px; width: min(380px, calc(100vw - 32px)); }
+.toast { display: flex; gap: 10px; align-items: flex-start; background: var(--panel-2); border: 1px solid #2fbf7166; border-radius: 14px; padding: 12px 12px 12px 14px; box-shadow: 0 12px 40px -12px #000; animation: toast-in .25s ease-out; }
+.toast > div { flex: 1; min-width: 0; }
+.toast .icon-btn { flex: none; }
+@keyframes toast-in { from { transform: translateY(12px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }

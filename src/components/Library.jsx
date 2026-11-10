@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { urlFor } from '../lib/importer.js';
 import { clipCapFor, slideSecFor } from '../lib/settings.js';
-import { canPickWithHandles, fromInput, pickZips } from '../lib/persist.js';
+import { canPickFolderWithHandle, canPickWithHandles, fromInput, pickFolder, pickZips } from '../lib/persist.js';
 import { fmtDate, fmtDuration } from '../lib/storage.js';
 
 function Mosaic({ photos }) {
@@ -38,6 +38,7 @@ export default function Library({
   memories, visible, hidden, durations, isFiltered, settings, update, updateMode, error, onAddZips, onUnhideAll, onStartOver, onPlay, onFaceAlign,
 }) {
   const input = useRef(null);
+  const folderInput = useRef(null);
   const photos = useMemo(() => visible.filter((m) => m.kind === 'photo'), [visible]);
   const videos = useMemo(() => visible.filter((m) => m.kind === 'video'), [visible]);
 
@@ -86,10 +87,17 @@ export default function Library({
           const items = await pickZips();
           if (items) onAddZips(items);
         }}>+ Add more zips</button>
+        <button className="btn ghost" title="Add every zip in a folder" onClick={async () => {
+          if (!canPickFolderWithHandle) return folderInput.current.click();
+          const items = await pickFolder();
+          if (items) onAddZips(items);
+        }}>+ Add a folder</button>
         <button className="btn ghost" onClick={() => {
           if (confirm('Close these memories and forget the saved zips? Your zip files on disk are not touched.')) onStartOver();
         }}>Start over</button>
         <input ref={input} type="file" accept=".zip" multiple hidden
+          onChange={(e) => { onAddZips(fromInput(e.target.files)); e.target.value = ''; }} />
+        <input ref={folderInput} type="file" webkitdirectory="" multiple hidden
           onChange={(e) => { onAddZips(fromInput(e.target.files)); e.target.value = ''; }} />
       </header>
 

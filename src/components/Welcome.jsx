@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { canPickWithHandles, fromDrop, fromInput, pickZips } from '../lib/persist.js';
+import { canPickFolderWithHandle, canPickWithHandles, fromDrop, fromInput, pickFolder, pickZips } from '../lib/persist.js';
 
 // ---- the step-by-step guide's pictures ----
 // Each step shows public/guide/step-N.png if it exists (a real screenshot), and a drawn phone otherwise.
@@ -118,13 +118,13 @@ const GUIDE = [
   },
   {
     title: 'Download every zip',
-    body: <>Open the link, ideally on a computer, and download <em>all</em> the zip files. Big exports are split into several parts and you need every one. Don't unzip them.</>,
+    body: <>Open the link, ideally on a computer, and download <em>all</em> the zip files. Big exports are split into several parts and you need every one. Don't unzip them. Putting them together in one folder makes them easy to add in one go.</>,
   },
 ];
 
 const FAQ = [
   ['Are my photos uploaded anywhere?', "No. Snap Recap runs entirely in your browser. Your zips are read on your own device and nothing is sent to a server, not even the face matching."],
-  ['Do I need to unzip the files?', 'No, drop the .zip files in as they are. Select all of them at once if Snapchat split your export into several parts.'],
+  ['Do I need to unzip the files?', 'No, add the .zip files as they are. If Snapchat split your export into several parts, select them all at once, or put them in one folder and choose that folder.'],
   ['Will I have to re-upload next time?', 'In Chrome and Edge, Snap Recap remembers which zips you used, so you can reopen them with one click. In other browsers you just choose them again.'],
   ["Snapchat's menus look different.", 'Snapchat moves things around now and then. You can also request your data from a computer at accounts.snapchat.com: log in, open My Data, and follow the same steps.'],
   ['Some of my videos are missing.', "A few iPhone videos (HEVC) can't play in every browser. Those clips are skipped automatically. Chrome, Edge or Safari usually play the most."],
@@ -132,6 +132,7 @@ const FAQ = [
 
 export default function Welcome({ importing, importInfo, error, onFiles, saved = [], onRestore, onForget }) {
   const input = useRef(null);
+  const folderInput = useRef(null);
   const [over, setOver] = useState(false);
 
   const drop = (e) => {
@@ -144,6 +145,14 @@ export default function Welcome({ importing, importInfo, error, onFiles, saved =
     if (importing) return;
     if (!canPickWithHandles) return input.current.click();
     const items = await pickZips();
+    if (items) onFiles(items);
+  };
+
+  const chooseFolder = async (e) => {
+    e?.stopPropagation();
+    if (importing) return;
+    if (!canPickFolderWithHandle) return folderInput.current.click();
+    const items = await pickFolder();
     if (items) onFiles(items);
   };
 
@@ -191,6 +200,8 @@ export default function Welcome({ importing, importInfo, error, onFiles, saved =
         >
           <input ref={input} type="file" accept=".zip,application/zip" multiple hidden
             onChange={(e) => { onFiles(fromInput(e.target.files)); e.target.value = ''; }} />
+          <input ref={folderInput} type="file" webkitdirectory="" multiple hidden
+            onChange={(e) => { onFiles(fromInput(e.target.files)); e.target.value = ''; }} />
           {importing ? (
             <>
               <div className="spinner" />
@@ -199,8 +210,13 @@ export default function Welcome({ importing, importInfo, error, onFiles, saved =
             </>
           ) : (
             <>
-              <span className="btn primary big"><span aria-hidden>⬆</span> Upload your zips</span>
-              <span className="muted">or drag them anywhere onto this page. Select all the parts at once.</span>
+              <div className="upload-choices">
+                <span className="btn primary big"><span aria-hidden>⬆</span> Upload your zips</span>
+                <button className="btn ghost big" onClick={chooseFolder}><span aria-hidden>📁</span> Choose a folder</button>
+              </div>
+              <span className="muted">
+                Select all the zip parts at once, or pick the folder they're in. You can also drag the zips or the folder onto this page.
+              </span>
             </>
           )}
         </div>
@@ -258,9 +274,14 @@ export default function Welcome({ importing, importInfo, error, onFiles, saved =
         </ol>
         <div className="guide-end">
           <h3>Got your zips?</h3>
-          <button className="btn primary big" onClick={() => { toTop(); choose(); }} disabled={importing}>
-            <span aria-hidden>⬆</span> Upload them
-          </button>
+          <div className="upload-choices">
+            <button className="btn primary big" onClick={() => { toTop(); choose(); }} disabled={importing}>
+              <span aria-hidden>⬆</span> Upload them
+            </button>
+            <button className="btn ghost big" onClick={() => { toTop(); chooseFolder(); }} disabled={importing}>
+              <span aria-hidden>📁</span> Choose their folder
+            </button>
+          </div>
         </div>
       </section>
 
