@@ -316,6 +316,14 @@ let recogP = null;
 function getRecognizer() {
   recogP ||= (async () => {
     const api = await import('@vladmandic/face-api');
+    // Use the graphics card when there is one; otherwise plain JavaScript, which is slower but works
+    // everywhere. (face-api would otherwise try its WebAssembly engine, whose files aren't shipped.)
+    for (const backend of ['webgl', 'cpu']) {
+      try {
+        if (await api.tf.setBackend(backend)) break;
+      } catch { /* try the next one */ }
+    }
+    await api.tf.ready();
     await api.nets.faceRecognitionNet.loadFromUri(new URL('models', document.baseURI).href);
     return api;
   })();
