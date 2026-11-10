@@ -29,11 +29,6 @@ npm run dev
 
 Then open the URL it prints. To make a production build in `dist/`, run `npm run build`.
 
-## Put it on GitHub Pages
-
-1. Push this repo to GitHub.
-2. Go to **Settings → Pages** and set **Source** to **GitHub Actions** (not "Deploy from a branch", which publishes the unbuilt source and shows a blank page).
-3. Every push to `main` deploys the site to `https://<your-username>.github.io/<repo-name>/`.
 
 ## How it works
 
