@@ -220,7 +220,9 @@ export default function Welcome({ importing, importInfo, error, onFiles, saved =
 
         <div id="upload"
           className={`drop hero-drop ${over ? 'over' : ''} ${importing ? 'busy' : ''}`}
-          onClick={choose}
+          // The hidden file inputs live inside this box, so opening one (camera roll, folder) sends a click
+          // up to here. Ignore those, or the zip picker opens too, and on iPhone it wins (opening Files).
+          onClick={(e) => { if (e.target.tagName !== 'INPUT') choose(); }}
           role="button"
           tabIndex={0}
           onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && choose()}
