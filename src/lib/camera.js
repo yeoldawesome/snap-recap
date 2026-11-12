@@ -136,17 +136,47 @@ export async function canShowHeic(sample) {
   return heicOk;
 }
 
+// HEIC photos in browsers that can't show them (Chrome, Edge, Firefox) are converted to JPEG as they're
+// needed, with the converter (about 3 MB) loaded only then. The last few conversions are kept, since the
+// player and face align often ask for the same photo again straight away.
+let heicToP = null;
+const heicTo = () => (heicToP ||= import('heic-to').then((m) => m.heicTo));
+const converted = new Map(); // File -> Promise<Blob>, most recent last
+const KEEP_CONVERTED = 8;
+
+function convertHeic(file) {
+  let p = converted.get(file);
+  if (p) {
+    converted.delete(file);
+    converted.set(file, p);
+    return p;
+  }
+  p = heicTo()
+    .then((to) => to({ blob: file, type: 'image/jpeg', quality: 0.9 }))
+    .catch((e) => {
+      console.warn("Couldn't convert", file.name, e);
+      converted.delete(file);
+      return file; // shown as missing rather than stopping playback
+    });
+  converted.set(file, p);
+  while (converted.size > KEEP_CONVERTED) converted.delete(converted.keys().next().value);
+  return p;
+}
+
 /** Looks enough like a zip entry for readBlob/urlFor. */
-const asEntry = (file) => ({
-  filename: file.name,
+const asEntry = (file, convert) => ({
+  filename: convert ? file.name.replace(/\.(heic|heif)$/i, '.jpg') : file.name,
   uncompressedSize: file.size,
   lastModDate: new Date(file.lastModified),
-  getData: () => Promise.resolve(file),
+  getData: () => (convert ? convertHeic(file) : Promise.resolve(file)),
 });
 
 /** Adds the files to the same map the zip importer uses. Returns everything, oldest first. */
 export async function importMedia(files, onProgress, map = new Map()) {
   const list = files.filter(isMediaFile);
+  // iPhone and Mac photos are HEIC; check once whether this browser can show them itself.
+  const firstHeic = list.find(isHeic);
+  const convertHeicHere = firstHeic ? !(await canShowHeic(firstHeic)) : false;
   let done = 0;
   let next = 0;
   // A few at a time: each only reads a small piece of its file.
@@ -156,18 +186,13 @@ export async function importMedia(files, onProgress, map = new Map()) {
       const kind = isVideoFile(f) ? 'video' : 'photo';
       const date = (kind === 'video' ? await videoDate(f) : await anyPhotoDate(f)) || f.lastModified || Date.now();
       const key = `cam:${f.name}:${f.size}`;
-      map.set(key, { key, id: key, kind, date, main: asEntry(f), fromCameraRoll: true });
+      map.set(key, { key, id: key, kind, date, main: asEntry(f, convertHeicHere && isHeic(f)), fromCameraRoll: true });
       if (++done % 25 === 0 || done === list.length) onProgress?.(done, list.length, f.name);
     }
   };
   onProgress?.(0, list.length, '');
   await Promise.all([worker(), worker(), worker(), worker()]);
-  // iPhone photos copied straight to a computer are HEIC, which most browsers can't show:
-  // leave those out (rather than showing blank slides) and report how many.
-  const heic = list.filter(isHeic);
-  const heicBlocked = heic.length && !(await canShowHeic(heic[0])) ? heic.length : 0;
-  if (heicBlocked) heic.forEach((f) => map.delete(`cam:${f.name}:${f.size}`));
   const all = [...map.values()].filter((m) => m.main);
   all.sort((a, b) => a.date - b.date);
-  return { list: all, map, heicBlocked };
+  return { list: all, map };
 }

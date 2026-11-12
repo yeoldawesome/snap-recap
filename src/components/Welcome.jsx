@@ -83,6 +83,9 @@ const MOCKS = {
 };
 
 /** True on phones and tablets (touch screens without a mouse), where a folder picker isn't available. */
+/** True on a Mac (not an iPad pretending to be one), where photos live in the Photos app. */
+const isMac = typeof navigator !== 'undefined' && /Macintosh|Mac OS X/.test(navigator.userAgent) && !(navigator.maxTouchPoints > 1);
+
 function usePhone() {
   const [phone] = useState(() => typeof window !== 'undefined'
     && (window.matchMedia?.('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)));
@@ -135,6 +138,18 @@ const FAQ = [
   ['Will I have to re-upload next time?', 'In Chrome and Edge, Snap Recap remembers which zips you used, so you can reopen them with one click. In other browsers you just choose them again.'],
   ["Snapchat's menus look different.", 'Snapchat moves things around now and then. You can also request your data from a computer at accounts.snapchat.com: log in, open My Data, and follow the same steps.'],
   ['Can I use my camera roll instead?', "Yes. Tap Use my camera roll on your phone and pick photos and videos. They're sorted by when they were taken. They aren't remembered after you close the page, so you'd pick them again next time. That's fine for a few hundred; for your whole camera roll, see the next question."],
+  ['How do I use the Photos app on my Mac?', (
+    <>
+      Photos keeps everything inside one library file, so pick from it like this:
+      <ol className="faq-steps">
+        <li>Click <em>Use my Photos library</em>. In the window that opens, click <em>Photos</em> in the sidebar under <em>Media</em> (it may be called <em>Photos Library</em>).</li>
+        <li>Press <kbd>⌘</kbd><kbd>A</kbd> to select everything (or pick an album first), then click <em>Open</em>.</li>
+      </ol>
+      Or drag <em>Photos Library</em> from your <em>Pictures</em> folder in Finder onto this page: Snap Recap reads just the photos and videos inside it and skips its thumbnails and caches.
+      If you use iCloud Photos with <em>Optimize Mac Storage</em> turned on, only photos already downloaded to the Mac are there. In Photos, choose <em>Settings → iCloud → Download Originals to this Mac</em> to get them all.
+      Mac photos are HEIC. Safari shows them directly; Chrome and Edge convert each one as it's shown, which is a little slower.
+    </>
+  )],
   ['How do I use my whole iPhone camera roll?', (
     <>
       Picking thousands of photos on the phone itself is slow (iPhone copies each one first) and can crash Safari, so use a computer:
@@ -250,10 +265,18 @@ export default function Welcome({ importing, importInfo, error, onFiles, saved =
                 <span className="btn primary big"><span aria-hidden>⬆</span> Upload your zips</span>
                 {phone ? (
                   <button className="btn ghost big" onClick={chooseCameraRoll}><span aria-hidden>📷</span> Use my camera roll</button>
+                ) : isMac ? (
+                  <button className="btn ghost big" onClick={chooseCameraRoll}><span aria-hidden>🌄</span> Use my Photos library</button>
                 ) : (
                   <button className="btn ghost big" onClick={chooseFolder}><span aria-hidden>📁</span> Choose a folder</button>
                 )}
               </div>
+              {isMac && !phone && (
+                <span className="mac-tip small">
+                  <b>Photos library:</b> in the window that opens, click <em>Photos</em> in the sidebar (under <em>Media</em>),
+                  press <kbd>⌘</kbd><kbd>A</kbd> to select everything, then click <em>Open</em>.
+                </span>
+              )}
               <span className="muted">
                 {phone
                   ? 'Pick all your Snapchat zip parts at once, or skip the export and choose photos and videos from your camera roll.'
@@ -261,9 +284,11 @@ export default function Welcome({ importing, importInfo, error, onFiles, saved =
               </span>
               {!phone && (
                 <span className="muted small">
-                  <button className="link" onClick={chooseCameraRoll}>Pick photos and videos</button>
+                  {isMac
+                    ? <button className="link" onClick={chooseFolder}>Choose a folder of zips or photos</button>
+                    : <button className="link" onClick={chooseCameraRoll}>Pick photos and videos</button>}
                   {' · '}
-                  <a href="#faq" onClick={(e) => { e.preventDefault(); e.stopPropagation(); const d = document.getElementById('whole-roll'); d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}>using your whole iPhone camera roll</a>
+                  <a href="#faq" onClick={(e) => { e.preventDefault(); e.stopPropagation(); const d = document.getElementById(isMac ? 'mac-photos' : 'whole-roll'); d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}>{isMac ? 'help with the Photos app' : 'using your whole iPhone camera roll'}</a>
                 </span>
               )}
             </>
@@ -338,7 +363,7 @@ export default function Welcome({ importing, importInfo, error, onFiles, saved =
         <h2 id="faq">Questions</h2>
         <div className="faq">
           {FAQ.map(([q, a]) => (
-            <details key={q} id={q.includes('whole iPhone camera roll') ? 'whole-roll' : undefined}>
+            <details key={q} id={q.includes('whole iPhone camera roll') ? 'whole-roll' : q.includes('Photos app on my Mac') ? 'mac-photos' : undefined}>
               <summary>{q}</summary>
               <p>{a}</p>
             </details>

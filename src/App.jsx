@@ -96,18 +96,9 @@ export default function App() {
       if (files.length) {
         ({ list } = await importZips(files, (done, total, name) => setImportInfo({ done, total, name }), mapRef.current));
       }
-      let heicBlocked = 0;
       if (media.length) {
-        ({ list, heicBlocked } = await importMedia(media.map((i) => i.file),
+        ({ list } = await importMedia(media.map((i) => i.file),
           (done, total, name) => setImportInfo({ done, total, name, media: true }), mapRef.current));
-      }
-      const heicNote = heicBlocked
-        ? `${heicBlocked.toLocaleString()} iPhone photo${heicBlocked === 1 ? ' is' : 's are'} in HEIC format, which this browser can't show, so ${heicBlocked === 1 ? 'it was' : 'they were'} left out. Open Snap Recap in Safari on a Mac, or copy them again with iPhone Settings → Photos → Transfer to Mac or PC set to Automatic (that saves them as JPG).`
-        : '';
-      if (!list.length && heicNote) {
-        setError(heicNote);
-        setPhase(prevPhase === 'library' ? 'library' : 'welcome');
-        return;
       }
       if (!list.length) {
         setError(files.length
@@ -118,7 +109,6 @@ export default function App() {
       }
       setMemories(list);
       setPhase('library');
-      if (heicNote) setError(heicNote);
       setSaved([]);
       // Only zips are remembered; camera roll picks are too big to keep a copy of, so they're chosen again.
       if (remember && zips.length) rememberZips(zips);

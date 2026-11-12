@@ -91,34 +91,62 @@ const isZip = (f) => f.name.toLowerCase().endsWith('.zip') && !f.name.startsWith
 // What a folder pick or drop takes in: Snapchat zips, plus photos and videos (e.g. a camera roll
 // copied to the computer). Works on Files, file handles and drop entries (the last two have no .type).
 const wanted = (f) => isZip(f) || isMediaFile({ name: f.name, type: f.type || '' });
-const MAX_DEPTH = 4; // how many folders deep to look for zips
+const MAX_DEPTH = 6; // how many folders deep to look (old Photos libraries nest by year/month/day/event)
 
-/** Every zip, photo and video in a folder (and its subfolders), with handles so they can be reopened later. */
-async function zipsInHandle(dir, depth = 0, out = []) {
+// A Mac Photos library ("Photos Library.photoslibrary") is a folder full of thumbnails, caches and a
+// database; the photos themselves are only in "originals" (or "Masters" in older libraries).
+const isLibrary = (name) => /\.photoslibrary$/i.test(name);
+const LIBRARY_PHOTOS = new Set(['originals', 'masters']);
+function folderWanted(name, parentIsLibrary) {
+  if (name.startsWith('.')) return false;
+  return parentIsLibrary ? LIBRARY_PHOTOS.has(name.toLowerCase()) : true;
+}
+// A Live Photo is a photo plus a ~3 second clip with the same name; keep just the photo.
+const stem = (name) => name.replace(/\.[^.]+$/, '').replace(/_\d+$/, '').toLowerCase();
+function dropLiveClips(files) {
+  const photos = new Set(files.filter((f) => !isMediaVideo(f.name)).map((f) => stem(f.name)));
+  return files.filter((f) => !isMediaVideo(f.name) || !photos.has(stem(f.name)));
+}
+const isMediaVideo = (name) => /\.(mov|mp4|m4v)$/i.test(name);
+
+/**
+ * Every zip, photo and video in a folder (and its subfolders), with handles so they can be reopened later.
+ * `lib`: 'in' for the top of a Photos library, 'photos' for inside its originals.
+ */
+async function zipsInHandle(dir, depth = 0, out = [], lib = isLibrary(dir.name) ? 'in' : '') {
+  const here = [];
   for await (const h of dir.values()) {
     if (h.kind === 'file') {
-      if (wanted(h)) out.push({ file: await h.getFile(), handle: h });
-    } else if (depth < MAX_DEPTH) {
-      await zipsInHandle(h, depth + 1, out);
+      if (lib !== 'in' && wanted(h)) here.push(h);
+    } else if (depth < MAX_DEPTH && folderWanted(h.name, lib === 'in')) {
+      const sub = isLibrary(h.name) ? 'in' : lib === 'in' ? 'photos' : lib;
+      // Inside a library, start counting depth again: its originals sit several folders down.
+      await zipsInHandle(h, sub && sub !== lib ? 0 : depth + 1, out, sub);
     }
   }
+  for (const h of lib === 'photos' ? dropLiveClips(here) : here) out.push({ file: await h.getFile(), handle: h });
   return out;
 }
 
 /** The same for browsers without handles (a dropped folder in Firefox/Safari). */
-async function zipsInEntry(dir, depth = 0, out = []) {
+async function zipsInEntry(dir, depth = 0, out = [], lib = isLibrary(dir.name) ? 'in' : '') {
   const reader = dir.createReader();
+  const here = [];
   for (;;) {
     // readEntries returns a batch at a time; an empty batch means done.
     const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
     if (!batch.length) break;
     for (const e of batch) {
       if (e.isFile) {
-        if (wanted(e)) out.push({ file: await new Promise((res, rej) => e.file(res, rej)) });
-      } else if (e.isDirectory && depth < MAX_DEPTH) {
-        await zipsInEntry(e, depth + 1, out);
+        if (lib !== 'in' && wanted(e)) here.push(e);
+      } else if (e.isDirectory && depth < MAX_DEPTH && folderWanted(e.name, lib === 'in')) {
+        const sub = isLibrary(e.name) ? 'in' : lib === 'in' ? 'photos' : lib;
+        await zipsInEntry(e, sub && sub !== lib ? 0 : depth + 1, out, sub);
       }
     }
+  }
+  for (const e of lib === 'photos' ? dropLiveClips(here) : here) {
+    out.push({ file: await new Promise((res, rej) => e.file(res, rej)) });
   }
   return out;
 }
